@@ -90,7 +90,7 @@ with open( 'adsorption.dat', 'w+' ) as f:
                                                     z_max=PEG_max_extension,
                                                     verbose=verbose 
                                                     )
-        K_bind_approx = system.calculate_binding_constant_saddle(R_NP = R_NP, sigma_L = sigma_L, 
+        K_bind_saddle_approx = system.calculate_binding_constant_saddle(R_NP = R_NP, sigma_L = sigma_L, 
                                                           sigma_polymer = sigma_L, 
                                                           sigma_R = sigma_R, 
                                                           N = NmonoLong, 
@@ -98,8 +98,19 @@ with open( 'adsorption.dat', 'w+' ) as f:
                                                           K0 = K0, 
                                                           z_max=PEG_max_extension, 
                                                           verbose = verbose)
+        
+        K_bind_simple_discrete = system.calculate_binding_constant_simple( R_NP, 
+                                                            sigma_L = sigma_L, 
+                                                            sigma_R = sigma_R, 
+                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ), 
+                                                            N_PEG_2K = Nmonomers( MW = 2000*g ), 
+                                                            a = amono, 
+                                                            K0 = K0, 
+                                                            model = "discrete", 
+                                                            verbose = False)
         print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
-        print( f'Effective dissociation constant (approx) (M): {float((1.0 / K_bind_approx) / M):5.3e}' )
+        print( f'Effective dissociation constant (saddle approx) (M): {float((1.0 / K_bind_saddle_approx) / M):5.3e}' )
+        print( f'Effective dissociation constant (discrete approx) (M): {float((1.0 / K_bind_simple_discrete) / M):5.3e}' )
         print( f'Effective density compared to bulk: {float(K_bind / v_bind):5.3e}' )
         # Now we can calculate the adsorbed fraction
         adsorbed_fraction = system.calculate_bound_fraction(
@@ -107,19 +118,26 @@ with open( 'adsorption.dat', 'w+' ) as f:
                                                             cell_conc=cell_conc, R_NP=R_NP, 
                                                             A_cell=A_cell
                                                             )
-        adsorbed_fraction_approx = system.calculate_bound_fraction(
-                                                            K_bind=K_bind_approx, NP_conc=NP_conc, 
+        adsorbed_fraction_saddle = system.calculate_bound_fraction(
+                                                            K_bind=K_bind_saddle_approx, NP_conc=NP_conc, 
                                                             cell_conc=cell_conc, R_NP=R_NP, 
                                                             A_cell=A_cell
                                                             )
+        #adsorbed_fraction_discrete = system.calculate_bound_fraction(
+        #                                                    K_bind=K_bind_simple_discrete, NP_conc=NP_conc, 
+        #                                                    cell_conc=cell_conc, R_NP=R_NP, 
+        #                                                    A_cell=A_cell
+        #                                                    )
         # Print the adsorbed fraction
         print( f'Adsorbed fraction: {float(adsorbed_fraction):5.3e}' )
         out1 = float(sigma_R/(1/um2))
         out2 = float((1 / K_bind) / M)
         out3 = float(adsorbed_fraction)
-        out4 = float((1 / K_bind_approx) / M)
-        out5 = float(adsorbed_fraction_approx)
+        out4 = float((1 / K_bind_saddle_approx) / M)
+        out5 = float(adsorbed_fraction_saddle)
         f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e} \n' )
+        #out6 = float(adsorbed_fraction_simple_discrete)
+        #f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e} {out6:5.3e} \n' )
     
 
 # Now we can plot the results

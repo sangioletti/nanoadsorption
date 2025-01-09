@@ -4,7 +4,7 @@ from scipy.optimize import fsolve, minimize
 from mpmath import mp
 
 class MultivalentBinding:
-    def __init__(self, kT=1.0):
+    def __init__(self, kT=1.0 ):
         self.kT = kT  # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
         self.nm2 = ( self.nm )**2 # Sets the units of area
@@ -12,7 +12,7 @@ class MultivalentBinding:
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 ) 
         
     def K_LR(self, h, N, a, K0):
-        """Calculate average bond strength K_LR(h) between ligand-receptor pairs"""
+        """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs"""
         prefactor = K0 * np.sqrt(12/(np.pi * N * a**2)) 
         exp_term = np.exp(-3 * h / (4 * N * a**2))
         erf_num = erf(np.sqrt(3 * h**2/(4 * N * a**2)))
@@ -25,6 +25,21 @@ class MultivalentBinding:
         else:
             return prefactor * exp_term * erf_num/erf_den
         
+    def distances(self, N, a ):
+        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
+        have equal probability."""
+        R_ee = np.sqrt( N ) * a
+        R_bind_ave = R_ee * 4 * np.sqrt(2) / 3.0
+        R_max = mp.sqrt( 8.0 ) * R_ee
+        return R_ee, R_bind_ave, R_max
+        
+    def chi_LR(self, r_bond, N, a, K0):
+        """Calculate average bond strength between ligand-receptor pairs.
+        Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
+        (ligands or receptors)"""
+        r_ee, r_bond, _ = self.distances( N, a )
+        chi_conf = ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2))
+        return K0 * chi_conf
     
     def unbinding_probs(self, sigma_L, sigma_R, K_LR):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
@@ -45,6 +60,54 @@ class MultivalentBinding:
         
         return p_L, p_R
     
+    def unbinding_probs_discrete(self, N_L, N_R, chi_LR):
+        """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
+        N_L = mp.mpf(N_L)
+        N_R = mp.mpf(N_R)
+        check = isinstance( chi_LR, np.ndarray)
+        
+        if check:
+            chi_LR = mp.mpf(chi_LR[0])
+        else:
+            chi_LR = mp.mpf(chi_LR)
+
+        p_L = (N_L-N_R) * chi_LR - 1.0 + mp.sqrt(4.0*N_L*chi_LR + (1.0+(N_R-N_L)*chi_LR)**2)
+        p_L /= (2.0*N_L*chi_LR)
+        
+        p_R = (N_R-N_L) * chi_LR - 1.0 + mp.sqrt(4.0*N_R*chi_LR + (1.0+(N_L-N_R)*chi_LR)**2)
+        p_R /= (2.0*N_R*chi_LR)
+        
+        return p_L, p_R
+    
+    def unbinding_probs_discrete_positional( self, N_L, sigma_R, r, N, a, K0 ):
+        """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound.
+        It assume discrete ligands and a smeared out receptor density, 
+        without using any excluded volume effects but correctly accounting for the 
+        probability that bonds of different length have different probabilities. We 
+        assume a single ligand-receptor pair type.
+        """
+        _, _, r_max = 2 * self.average_dist( N, a )
+        def integrand( r, p_L ):
+            num = 2 * np.pi * p_L * r * sigma_R * self.chi_LR( r, N, a, K0 )
+            den = 1.0 + N_L * p_L * self.chi_LR( r, N, a, K0 ) 
+            return num/den
+
+        def integral( pL ):
+            return np.trapz( [ integrand( r, pL ) for r in np.linspace(0, 2 * r_max, 100) ] )
+
+        def fun( pL, ):
+            return pL + integral( pL ) - 1.0
+        
+        initial_guess = 0.5
+        bounds = [(0.0, 1.0)]
+        res = minimize( fun, initial_guess, bounds=bounds)
+        p_L = res.x[0]
+        
+        p_R = 1.0 / ( 1.0 + N_L * p_L * self.chi_LR( r, N, a, K0 ) )
+        
+        return p_L, p_R
+
+    
     def unbinding_probs_low_precision(self, sigma_L, sigma_R, K_LR):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound.
         This is a low precision version of the unbinding_probs method, and gets
@@ -58,6 +121,47 @@ class MultivalentBinding:
         p_R /= (2*sigma_R*K_LR)
         
         return p_L, p_R
+    
+    def A_bond_discrete(self, N_L, N_R, chi_LR, verbose = False):
+        p_L, p_R = self.unbinding_probs_discrete( N_L, N_R, chi_LR )
+        if p_L == 0:
+            return np.inf
+        else:
+            bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
+
+        if p_R == 0:
+            return np.inf
+        else:
+            bond_energy_R = N_R * (mp.log(p_R) + 0.5*(1 - p_R))
+        if verbose:
+            print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
+
+        return bond_energy_L + bond_energy_R
+        
+    def A_bond_positional( self, N_L, sigma_R, N, a, K0, verbose = False):
+        # Note that this first part is only needed to calculate p_L and the value
+        # assumed for r is irrelevant, we could have used any value, here we use
+        # r = 1.0
+        p_L, p_R = self.unbinding_probs_discrete_positional( N_L, sigma_R, 1.0, N, a, K0 )
+        if p_L == 0:
+            return np.inf
+        else:
+            bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
+
+        if p_R == 0:
+            return np.inf
+        else:
+            _, _, r_max = self.distances( N, a )
+            def fun( r, pL ):
+                den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K0 ) 
+                return 2.0 * mp.pi * r * sigma_R * ( np.log( 1.0 / den ) + 0.5 * (1.0 - 1.0 / den ) )
+            
+            bond_energy_R = np.integrate( fun, 0, r_max, args=(p_L) )
+
+        if verbose:
+            print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
+
+        return bond_energy_L + bond_energy_R
     
     
     def W_bond(self, h, sigma_L, sigma_R, N, a, K0, verbose = False ):
@@ -110,20 +214,45 @@ class MultivalentBinding:
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant_shaw(self, R_NP, sigma_L, sigma_R, Nlong, Nshort a, K0, z_max, verbose = False):
+    def calculate_binding_constant_shaw(self, R_NP, sigma_L, sigma_R, 
+                                        N_PEG_3p4K, N_PEG_2K, a, K0, 
+                                        verbose = False):
         """Calculate binding constant using my initial approximation, as previously done"""
-        Rlong = np.sqrt( Nlong ) * a
-        Rshort = np.sqrt( Nshort ) * a
-        f1 = 1.0 - ((R_NP/2) + Rshort ) / ((R_NP/2) + Rlong )
+        R_long = np.sqrt( N_PEG_3p4K ) * a
+        R_short = np.sqrt( N_PEG_2K ) * a
+        f1 = 1.0 - ((R_NP/2) + R_short ) / ((R_NP/2) + R_long )
         A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
-        NL = sigma_L * A_p
-        A_R = np.pi * ( RNP/2 + Rlong )**2 - ( RNP/2 + Rshort )**2
-        NR = sigma_R * A_R
+        N_L = sigma_L * A_p
+        A_R = np.pi * ( R_NP/2 + R_long )**2 - ( R_NP/2 + R_short )**2
+        N_R = sigma_R * A_R
+        K_bind = N_L * N_R * 0.0 * K0
+        if verbose:
+            print( f"K bind: {K_bind}" )
+        raise ValueError( 'This method is not implemented yet' )
 
         return K_bind
     
-    def calculate_binding_constant_approx(self, R_NP, sigma_L, sigma_polymer, sigma_R, N, a, K0, z_max, verbose = False):
+    def calculate_binding_constant_simple( self, R_NP, sigma_L,
+                                          sigma_R, N_PEG_3p4K, 
+                                          N_PEG_2K, a, K0, model = "discrete", 
+                                          verbose = False):
         """Calculate binding constant using my initial approximation, as previously done"""
+        r_ee_long, r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
+        r_ee_short, _, _ = self.distances( N_PEG_2K, a )
+        v_bind = r_ee_long**3
+
+        f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
+        A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
+        N_L = sigma_L * A_p
+        A_R = np.pi * ( R_NP/2 + r_ee_long )**2 - ( R_NP/2 + r_ee_short )**2
+        N_R = sigma_R * A_R
+
+        if model == "discrete":
+            chi_LR = self.chi_LR( r_ave_bond, N_PEG_3p4K, a, K0 )
+            K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
+        elif model == "positional":
+            K_bind = v_bind * mp.exp( self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, 
+                                          model = "positional", verbose = verbose ) )
         return K_bind
     
     def calculate_binding_constant_saddle(self, R_NP, sigma_L, sigma_polymer, sigma_R, N, a, K0, z_max, verbose = False):
