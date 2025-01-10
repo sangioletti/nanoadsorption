@@ -38,7 +38,7 @@ class MultivalentBinding:
         """Calculate average bond strength between ligand-receptor pairs.
         Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
         (ligands or receptors)"""
-        r_ee, r_bond, _ = self.distances( N, a )
+        r_ee, _, _ = self.distances( N, a )
         chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
         return K0 * chi_conf
     
@@ -138,6 +138,8 @@ class MultivalentBinding:
             return np.inf
         else:
             bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
+            print( f"discrete, pL {p_L}, chi_LR {chi_LR}")
+            print( f"discrete, pR {float(p_R):3.5e}")
 
         if p_R == 0:
             return np.inf
@@ -157,16 +159,23 @@ class MultivalentBinding:
             return np.inf
         else:
             bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
+            print( f"positional, pL {p_L}")
 
         if p_R == 0:
             return np.inf
         else:
             _, _, r_max = self.distances( N, a )
             def fun( r, pL ):
-                den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K0 ) 
-                return 2.0 * mp.pi * r * sigma_R * ( mp.log( 1.0 / den ) + 0.5 * (1.0 - 1.0 / den ) )
+                den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K0 )
+                p_R = 1.0 / den  
+                return 2.0 * mp.pi * r * sigma_R * ( mp.log( p_R ) + 0.5 * (1.0 - p_R ) )
             
             bond_energy_R = quad(fun, 0.0, r_max, args=(p_L) )[ 0 ]
+            print( f"positional, chi_LR( min ), chi_LR( max ) {self.chi_LR( 0.0, N, a, K0 )}, {self.chi_LR( r_max, N, a, K0 )}")
+            p_R_min = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( 0, N, a, K0 )) )
+            p_R_max = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( r_max, N, a, K0 )) )
+            print( f"positional, p_R( max ) {p_R_max:3.5e} p_R_min {p_R_min:3.5e}")
+        print( f'Bond energy density: L:{bond_energy_L}  R:{bond_energy_R}' )
 
         if verbose:
             print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
@@ -246,7 +255,8 @@ class MultivalentBinding:
         factor2 = d**3 / 4.0 * ( 1.0-(d/2+r_ee_2K) / (d/2+r_max_3p4K))
         Veff = np.pi / 3.0 * ( factor1 - factor2 )
 
-        chi_LR = ( ( 1.0 / K0 ) * Veff )**(-1.0)
+        chi_LR = K0 / Veff #1/Veff is an effective density. The lower the harder to bond
+        print( f"shaw, chi_LR: {chi_LR}" )
         K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
 
         if verbose:
