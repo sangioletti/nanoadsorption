@@ -35,9 +35,9 @@ def Nmonomers( MW ):
 
 NmonoLong = Nmonomers( 3400 * g ) # Number of monomers in PEG3400 chain
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in PEG3400 chain
-amono = 0.4 * nm # Monomer size in PEG chain
+amono = 0.34 * nm # Monomer size in PEG chain
 PEG_max_extension = NmonoLong * amono # Max extension of the PEG chain
-KD = 20 * nM # Dissociation constant in solution between ligand-receptor
+KD = 1.0 * nM # Dissociation constant in solution between ligand-receptor
 K0 = KD**(-1) # Binding constant in solution between ligand-receptor
 R_NP = 50 * nm # Nanoparticle radius in units of length
 v_bind = np.pi * R_NP**2 * PEG_max_extension # Volume of binding site 
@@ -82,7 +82,7 @@ with open( 'adsorption.dat', 'w+' ) as f:
     print( f'Binding sites concentration {M_conc/(1/mL):5.3e} (1/mL)' )
     print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
     f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
-    for sigma_R in np.logspace( min_exp, max_exp, 100 ):
+    for sigma_R in np.logspace( min_exp, max_exp, 10 ):
         K_bind = system.calculate_binding_constant( R_NP=R_NP, sigma_L = sigma_L, 
                                                     sigma_polymer = sigma_L, 
                                                     sigma_R=sigma_R, N=NmonoLong, 
@@ -108,9 +108,27 @@ with open( 'adsorption.dat', 'w+' ) as f:
                                                             K0 = K0, 
                                                             model = "discrete", 
                                                             verbose = False)
+        K_bind_simple_positional = system.calculate_binding_constant_simple( R_NP, 
+                                                            sigma_L = sigma_L, 
+                                                            sigma_R = sigma_R, 
+                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ), 
+                                                            N_PEG_2K = Nmonomers( MW = 2000*g ), 
+                                                            a = amono, 
+                                                            K0 = K0, 
+                                                            model = "positional", 
+                                                            verbose = False)
+        K_bind_shaw = system.calculate_binding_constant_shaw( R_NP, sigma_L, sigma_R, 
+                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ),  
+                                                            N_PEG_2K = Nmonomers( MW = 2000*g ),   
+                                                            a = amono, 
+                                                            K0 = K0, 
+                                                            verbose = False)
+        
         print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
         print( f'Effective dissociation constant (saddle approx) (M): {float((1.0 / K_bind_saddle_approx) / M):5.3e}' )
-        print( f'Effective dissociation constant (discrete approx) (M): {float((1.0 / K_bind_simple_discrete) / M):5.3e}' )
+        print( f'Effective dissociation constant (discrete approx - simple) (M): {float((1.0 / K_bind_simple_discrete) / M):5.3e}' )
+        print( f'Effective dissociation constant (discrete approx - positional ) (M): {float((1.0 / K_bind_simple_positional) / M):5.3e}' )
+        print( f'Effective dissociation constant (Shaw ) (M): {float((1.0 / K_bind_shaw) / M):5.3e}' )
         print( f'Effective density compared to bulk: {float(K_bind / v_bind):5.3e}' )
         # Now we can calculate the adsorbed fraction
         adsorbed_fraction = system.calculate_bound_fraction(
@@ -123,11 +141,21 @@ with open( 'adsorption.dat', 'w+' ) as f:
                                                             cell_conc=cell_conc, R_NP=R_NP, 
                                                             A_cell=A_cell
                                                             )
-        #adsorbed_fraction_discrete = system.calculate_bound_fraction(
-        #                                                    K_bind=K_bind_simple_discrete, NP_conc=NP_conc, 
-        #                                                    cell_conc=cell_conc, R_NP=R_NP, 
-        #                                                    A_cell=A_cell
-        #                                                    )
+        adsorbed_fraction_discrete = system.calculate_bound_fraction(
+                                                            K_bind=K_bind_simple_discrete, NP_conc=NP_conc, 
+                                                            cell_conc=cell_conc, R_NP=R_NP, 
+                                                            A_cell=A_cell
+                                                            )
+        adsorbed_fraction_positional = system.calculate_bound_fraction(
+                                                            K_bind=K_bind_simple_positional, NP_conc=NP_conc, 
+                                                            cell_conc=cell_conc, R_NP=R_NP, 
+                                                            A_cell=A_cell
+                                                            )
+        adsorbed_fraction_shaw = system.calculate_bound_fraction(
+                                                            K_bind=K_bind_shaw, NP_conc=NP_conc, 
+                                                            cell_conc=cell_conc, R_NP=R_NP, 
+                                                            A_cell=A_cell
+                                                            )
         # Print the adsorbed fraction
         print( f'Adsorbed fraction: {float(adsorbed_fraction):5.3e}' )
         out1 = float(sigma_R/(1/um2))
@@ -135,10 +163,13 @@ with open( 'adsorption.dat', 'w+' ) as f:
         out3 = float(adsorbed_fraction)
         out4 = float((1 / K_bind_saddle_approx) / M)
         out5 = float(adsorbed_fraction_saddle)
-        f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e} \n' )
-        #out6 = float(adsorbed_fraction_simple_discrete)
-        #f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e} {out6:5.3e} \n' )
-    
+        out6 = float((1 / K_bind_simple_discrete) / M)
+        out7 = float(adsorbed_fraction_discrete)
+        out8 = float((1 / K_bind_simple_positional) / M)
+        out9 = float(adsorbed_fraction_positional)
+        out10 = float((1 / K_bind_shaw) / M)
+        out11 = float(adsorbed_fraction_shaw)
+        f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e}  {out6:5.3e} {out7:5.3e} {out8:5.3e} {out9:5.3e} {out10:5.3e} {out11:5.3e}\n' )
 
 # Now we can plot the results
 import matplotlib.pyplot as plt
@@ -148,7 +179,10 @@ data = np.loadtxt( 'adsorption.dat', skiprows=1 )
 plt.xscale( 'log' )
 plt.yscale( 'linear' )
 plt.plot( data[:,0], data[:,2], label='Exact', linestyle='solid' )
-plt.plot( data[:,0], data[:,4], label='Approx', linestyle='dashed' )
+plt.plot( data[:,0], data[:,4], label='Saddle', linestyle='dashed' )
+plt.plot( data[:,0], data[:,6], label='Discrete', linestyle='-.' ) 
+plt.plot( data[:,0], data[:,8], label='Positional', linestyle='--' )
+plt.plot( data[:,0], data[:,10], label='Shaw', linestyle='--' )
 plt.xlabel( 'Receptor surface density' )
 plt.ylabel( 'Adsorbed fraction' )
 plt.legend()

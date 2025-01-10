@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import erf
 from scipy.optimize import fsolve, minimize
+from scipy.integrate import quad    
 from mpmath import mp
 
 class MultivalentBinding:
@@ -30,7 +31,7 @@ class MultivalentBinding:
         have equal probability."""
         R_ee = np.sqrt( N ) * a
         R_bind_ave = R_ee * 4 * np.sqrt(2) / 3.0
-        R_max = mp.sqrt( 8.0 ) * R_ee
+        R_max = np.sqrt( 8.0 ) * R_ee
         return R_ee, R_bind_ave, R_max
         
     def chi_LR(self, r_bond, N, a, K0):
@@ -38,7 +39,7 @@ class MultivalentBinding:
         Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
         (ligands or receptors)"""
         r_ee, r_bond, _ = self.distances( N, a )
-        chi_conf = ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2))
+        chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
         return K0 * chi_conf
     
     def unbinding_probs(self, sigma_L, sigma_R, K_LR):
@@ -86,17 +87,26 @@ class MultivalentBinding:
         probability that bonds of different length have different probabilities. We 
         assume a single ligand-receptor pair type.
         """
-        _, _, r_max = 2 * self.average_dist( N, a )
+        _, _, r_max = self.distances( N, a )
+
         def integrand( r, p_L ):
+            if isinstance( p_L, np.ndarray):
+                p_L = p_L[0]
             num = 2 * np.pi * p_L * r * sigma_R * self.chi_LR( r, N, a, K0 )
-            den = 1.0 + N_L * p_L * self.chi_LR( r, N, a, K0 ) 
-            return num/den
+            den = 1.0 + N_L * p_L * self.chi_LR( r, N, a, K0 )
+            res = num/den
+            return res
 
         def integral( pL ):
-            return np.trapz( [ integrand( r, pL ) for r in np.linspace(0, 2 * r_max, 100) ] )
+            #integ = [ ( integrand( r, pL ), r ) for r in np.linspace(0, 2 * r_max, 100) ]
+            #print( f'XXXXX integ: {integ}' )
+            res = np.trapz( [ integrand( r, pL ) for r in np.linspace(0, 2 * r_max, 100) ], np.linspace(0, 2 * r_max, 100) )
+            #print( f"YYY res: {res}" )
+            #assert isinstance( res, np.float64), AssertionError( f'num: {num} is not a float' )
+            return res
 
-        def fun( pL, ):
-            return pL + integral( pL ) - 1.0
+        def fun( pL ):
+            return ( pL + integral( pL ) - 1.0 )**2
         
         initial_guess = 0.5
         bounds = [(0.0, 1.0)]
@@ -154,9 +164,9 @@ class MultivalentBinding:
             _, _, r_max = self.distances( N, a )
             def fun( r, pL ):
                 den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K0 ) 
-                return 2.0 * mp.pi * r * sigma_R * ( np.log( 1.0 / den ) + 0.5 * (1.0 - 1.0 / den ) )
+                return 2.0 * mp.pi * r * sigma_R * ( mp.log( 1.0 / den ) + 0.5 * (1.0 - 1.0 / den ) )
             
-            bond_energy_R = np.integrate( fun, 0, r_max, args=(p_L) )
+            bond_energy_R = quad(fun, 0.0, r_max, args=(p_L) )[ 0 ]
 
         if verbose:
             print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
@@ -217,18 +227,30 @@ class MultivalentBinding:
     def calculate_binding_constant_shaw(self, R_NP, sigma_L, sigma_R, 
                                         N_PEG_3p4K, N_PEG_2K, a, K0, 
                                         verbose = False):
-        """Calculate binding constant using my initial approximation, as previously done"""
-        R_long = np.sqrt( N_PEG_3p4K ) * a
-        R_short = np.sqrt( N_PEG_2K ) * a
-        f1 = 1.0 - ((R_NP/2) + R_short ) / ((R_NP/2) + R_long )
-        A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
+        """Calculate binding constant using results from Shaw's paper"""
+        #r_ee_long, r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
+        #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
+        nm = 1.0
+        r_max_3p4K = 11 * nm
+        r_ee_2K = 3.4 * nm
+        v_bind = r_max_3p4K**3
+
+        f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
+        A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
         N_L = sigma_L * A_p
-        A_R = np.pi * ( R_NP/2 + R_long )**2 - ( R_NP/2 + R_short )**2
+        A_R = np.pi * ( R_NP/2 + r_max_3p4K )**2 - ( R_NP/2 + r_ee_2K )**2
         N_R = sigma_R * A_R
-        K_bind = N_L * N_R * 0.0 * K0
+
+        d = R_NP / 2.0
+        factor1 = ((d/2 + r_max_3p4K)**2-(d/2+ r_ee_2K )**2)*(d/2+r_ee_2K) 
+        factor2 = d**3 / 4.0 * ( 1.0-(d/2+r_ee_2K) / (d/2+r_max_3p4K))
+        Veff = np.pi / 3.0 * ( factor1 - factor2 )
+
+        chi_LR = ( ( 1.0 / K0 ) * Veff )**(-1.0)
+        K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
+
         if verbose:
             print( f"K bind: {K_bind}" )
-        raise ValueError( 'This method is not implemented yet' )
 
         return K_bind
     
@@ -238,21 +260,32 @@ class MultivalentBinding:
                                           verbose = False):
         """Calculate binding constant using my initial approximation, as previously done"""
         r_ee_long, r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
-        r_ee_short, _, _ = self.distances( N_PEG_2K, a )
-        v_bind = r_ee_long**3
+        #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
+        #v_bind = r_ee_long**3
+        #f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
+        #A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
+        #N_L = sigma_L * A_p
+        #A_R = np.pi * ( R_NP/2 + r_ee_long )**2 - ( R_NP/2 + r_ee_short )**2
+        #N_R = sigma_R * A_R
 
-        f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
-        A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
+        nm = 1.0
+        r_max_3p4K = 11 * nm
+        r_ee_2K = 3.4 * nm
+
+        f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
+        A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
         N_L = sigma_L * A_p
-        A_R = np.pi * ( R_NP/2 + r_ee_long )**2 - ( R_NP/2 + r_ee_short )**2
+        A_R = np.pi * ( R_NP/2 + r_max_3p4K )**2 - ( R_NP/2 + r_ee_2K )**2
         N_R = sigma_R * A_R
 
+        print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
+
+        v_bind = r_max_3p4K**3
         if model == "discrete":
             chi_LR = self.chi_LR( r_ave_bond, N_PEG_3p4K, a, K0 )
             K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
         elif model == "positional":
-            K_bind = v_bind * mp.exp( self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, 
-                                          model = "positional", verbose = verbose ) )
+            K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, verbose = verbose ) )
         return K_bind
     
     def calculate_binding_constant_saddle(self, R_NP, sigma_L, sigma_polymer, sigma_R, N, a, K0, z_max, verbose = False):
