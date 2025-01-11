@@ -5,48 +5,96 @@ from scipy.integrate import quad
 from mpmath import mp
 
 class MultivalentBinding:
-    def __init__(self, kT=1.0 ):
+    def __init__(self, kT=1.0, R_NP, N_long, N_short, a_mono, 
+                 A_cell, NP_conce, cell_conc, 
+                 binding_model = None, 
+                 polymer_model = "gaussian"):
         self.kT = kT  # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
         self.nm2 = ( self.nm )**2 # Sets the units of area
         self.nm3 = ( self.nm )**3 # Sets the units of volume
-        self.rhostd = 6.023e23/ ( 1e24 * self.nm3 ) 
-        
+        self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
+        self.R_NP = R_NP 
+        self.N_long = N_long    
+        self.N_short = N_short
+        self.a_mono = a_mono
+        # These are the values used by Lennart and taken from paper.
+        # They are evaluated for polymers in the mushroom (2K) and brush (3.4K) regime
+        # However, I notice they are taken at inconsistent values of the grafting distance
+        # since the 3.4K is smaller which I am not sure is really correct.
+        self.R_max_3p4K = 11.1 * self.nm
+        self.R_ee_2K = 3.9 * nm #Initial calculations by Lennart used 4.0 but difference is irrelevant
+        self.polymer_model = polymer_model 
+        self.binding_model = binding_model
+        self.A_cell = A_cell
+        self.NP_conc = NP_conc
+        self.cell_conc = cell_conc
+        print( 'Few problems:' )
+        print( f'1) The values of R_max_3p4K and R_ee_2K are taken at different grafting distances' )
+        print( f'This problem might be solvable using a Komura-Safran model for the bimodal brush' )
+        print( f"""2) Brush repulsion only counted for long brush in Gaussian state but could be improved
+               - and you know how using KS-blob model. However, this should not really matter IF short brush is
+              very hard? Check""" )
+        print( f'3) Initial value used for Veff was not correctly calculated by Lennart' )
+        print( f'4) Bond energy using Flory model + Gaussian approx around a different average might be possible' )
+
     def K_LR(self, h, N, a, K0):
-        """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs"""
-        prefactor = K0 * np.sqrt(12/(np.pi * N * a**2)) 
-        exp_term = np.exp(-3 * h / (4 * N * a**2))
-        erf_num = erf(np.sqrt(3 * h**2/(4 * N * a**2)))
-        erf_den = erf(np.sqrt(3 * h**2/(2 * N * a**2)))
+        """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs,
+        assuming the planes containing ligands and receptors are parallel and at a distance 'h'
+        from each other.
+        K_LR is calculated assuming receptors are fixed point on a surface and ligands are tethered to 
+        a NP by a Gaussian polymer chain"""
+        if self.polymer_model == "gaussian":
+            prefactor = K0 * np.sqrt( 12.0 / ( np.pi * N * a**2)) 
+            exp_term = np.exp(-3.0 * h / (4 * N * a**2))
+            erf_num = erf(np.sqrt(3 * h**2/(4 * N * a**2)))
+            erf_den = erf(np.sqrt(3 * h**2/(2 * N * a**2)))
 
-        #print( f'K0 {K0}, prefactor {prefactor}, exp_term {exp_term}, erf_num {erf_num}, erf_den {erf_den}' )
-
-        if h == 0:
-            return prefactor / np.sqrt(2.0)
+            if h == 0:
+                return prefactor / np.sqrt(2.0)
+            else:
+                return prefactor * exp_term * erf_num/erf_den
         else:
-            return prefactor * exp_term * erf_num/erf_den
+            raise NotImplementedError( f'Area-weighted bond cost for polymer model {self.polymer_model} not implemented' )    
         
-    def r_ee( self, N, a, polymer_model = "gaussian" ):
-        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
-        have equal probability."""
-        if polymer_model == ( "gaussian" or "ideal" ):
+    def r_ee( self, N, a ):
+        """Calculate the average end-to-end distance in a polymer"""
+        if self.polymer_model == ( "gaussian" or "ideal" ):
             R_ee = np.sqrt( N ) * a
-        elif polymer_model == ( "self_avoiding_walk" or "Flory" ):
+        elif self.polymer_model == ( "self_avoiding_walk" or "Flory" ):
             nu = 3.0/5.0
             R_ee = N**(nu) * a
-        elif polymer_model == ( "Alexander-DeGennes" or "brush" ):
-            raise NotImplementedError( f'Polymer model {polymer_model} not implemented' )
+        elif self.polymer_model == ( "Alexander-DeGennes" or "brush" ):
+            R_ee = self.R_ee_2K
+        else:
+            raise ValueError( f'Polymer model {self.polymer_model} not recognized' )
         return R_ee
     
-    def r_ave_bond(self, R_ee ):
+    def r_ave_bond(self, z_dist, max_bond_length = None ):
         """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
-        have equal probability."""
-        return R_ee * 4 * np.sqrt(2) / 3.0
+        have equal probability, the grafting point of the ligand is at distance z_dist from the
+        receptor containing surface and that the maximum bond extension is max_bond_length.
+        Calculated as:
+        w(x) = A_norm * 2 pi x 
+        A = int_0_x_max w(x) dx --> A = 1.0 / [ pi * (max_bond_lengt**2 - z_dist**2) ]
+        x_ave = int_0,x_max w(x) x dx
+        average_bond_length = sqrt( z_dist**2 + x_ave**2 )
+        """
+        if max_bond_length is None:
+            max_bond_length = 3.0 * z_dist
+        assert max_bond_length > z_dist # Sanity check
+        x_ave = 2.0 / 3.0 * np.sqrt( max_bond_length**2 - z_dist**2 )
+        average_bond_length = np.sqrt( z_dist**2 + x_ave**2 ) 
+        return average_bond_length
     
-    def r_ee_max( self, R_ee ):
-        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
-        have equal probability."""
-        return np.sqrt( 8.0 ) * R_ee
+    def x_max_span( self, z_dist, max_bond_length = None ):
+        """The radius of the maximum circle spanned by a ligand on the receptor-containing surface.
+        Same assumption/geoemtry as above"""
+        if max_bond_length is None:
+            max_bond_length = 3.0 * z_dist
+        assert max_bond_length > z_dist # Sanity check
+        x_max = np.sqrt( max_bond_length**2 - z_dist**2 ) 
+        return x_max 
     
     def geometric_parameters( self, R_NP, R_long, R_short ):
         #Calculate the 'active area' containing RECEPTORS interacting with the NP
@@ -84,16 +132,23 @@ class MultivalentBinding:
         """Calculate average bond strength between ligand-receptor pairs.
         Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
         (ligands or receptors)"""
-        if model == "gaussian":
+        if self.binding_model == ( "simple" or "average" ):
             r_ee = self.r_ee( N, a )
-            chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
+            if self.polymer_model == "gaussian":
+                chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
+            else:
+                raise NotImplementedError( f'Bond cost for polymer model {self.polymer_model} not implemented' )  
         if model == "shaw":
-            _, _, V_eff = self.geometric_parameters( R_NP = , R_long = , R_short = )
+            R_NP = self.R_NP
+            R_long = self.R_max_3p4K
+            R_short = self.R_ee_2K
+            _, _, V_eff = self.geometric_parameters( R_NP = R_NP, R_long = R_long , R_short = R_short )
             chi_conf = K0 / V_eff
         return K0 * chi_conf
     
-    def unbinding_probs(self, sigma_L, sigma_R, K_LR):
+    def unbinding_probs( self, sigma_L, sigma_R, K_LR ):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
+        assert self.model == ( "exact" or "saddle" ), AssertionError( f'Only usable with exact and saddle point models' )
         sigma_L = mp.mpf(sigma_L)
         sigma_R = mp.mpf(sigma_R)
         check = isinstance( K_LR, np.ndarray)
@@ -113,6 +168,7 @@ class MultivalentBinding:
     
     def unbinding_probs_discrete(self, N_L, N_R, chi_LR):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
+        assert self.model == ( "average" or "shaw" ), AssertionError( f'Only usable with average or shaw models' )
         N_L = mp.mpf(N_L)
         N_R = mp.mpf(N_R)
         check = isinstance( chi_LR, np.ndarray)
@@ -137,7 +193,10 @@ class MultivalentBinding:
         probability that bonds of different length have different probabilities. We 
         assume a single ligand-receptor pair type.
         """
-        _, _, r_max = self.distances( N, a )
+        assert self.model == ( "simple" ), AssertionError( f"Only usable with 'simple' models" )
+        R_ee = z_dist = self.r_ee( N, a )
+        r_max = self.x_max_span( z_dist = z_dist, 
+                                 max_bond_length = 3.0 * R_ee )
 
         def integrand( r, p_L ):
             if isinstance( p_L, np.ndarray):
@@ -164,21 +223,6 @@ class MultivalentBinding:
         p_L = res.x[0]
         
         p_R = 1.0 / ( 1.0 + N_L * p_L * self.chi_LR( r, N, a, K0 ) )
-        
-        return p_L, p_R
-
-    
-    def unbinding_probs_low_precision(self, sigma_L, sigma_R, K_LR):
-        """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound.
-        This is a low precision version of the unbinding_probs method, and gets
-        numerical errors due to difference between small numbers for very large
-        and very small values of K_LR"""
-        
-        p_L = (sigma_L-sigma_R) * K_LR - 1 + np.sqrt(4*sigma_L*K_LR + (1+(sigma_R-sigma_L)*K_LR)**2)
-        p_L /= (2*sigma_L*K_LR)
-        
-        p_R = (sigma_R-sigma_L) * K_LR - 1 + np.sqrt(4*sigma_R*K_LR + (1+(sigma_L-sigma_R)*K_LR)**2)
-        p_R /= (2*sigma_R*K_LR)
         
         return p_L, p_R
     
@@ -261,6 +305,7 @@ class MultivalentBinding:
     def W_steric(self, h, sigma_polymer, N, a, verbose = False):
         """Calculate steric repulsion free energy per unit area"""
         # This is to avoid numerical problems
+        assert self.polymer_model == "gaussian", AssertionError( f"Repulsion implemented only for gaussian polymer")
         check = isinstance( h, np.ndarray)
         
         if check:
@@ -278,144 +323,171 @@ class MultivalentBinding:
     
     def W_total(self, h, sigma_L, sigma_polymer, sigma_R, N, a, K0, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        Ree = mp.sqrt( N * a**2 )
+        #Ree = mp.sqrt( N * a**2 )
         W_bond = self.W_bond(h, sigma_L, sigma_R, N, a, K0, verbose)
         W_steric = self.W_steric(h, sigma_polymer, N, a, verbose)
         if verbose:
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant_shaw(self, R_NP, sigma_L, sigma_R, 
-                                        N_PEG_3p4K, N_PEG_2K, a, K0, 
-                                        verbose = False):
-        """Calculate binding constant using results from Shaw's paper"""
-        #r_ee_long, r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
-        #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
-        nm = 1.0
-        r_max_3p4K = 11 * nm
-        r_ee_2K = 3.4 * nm
-        v_bind = r_max_3p4K**3
+    def calculate_binding_constant(self, K_0, sigma_L, sigma_R,
+                                   sigma_polymer = None,
+                                   z_max = None, 
+                                   verbose = False):
+        R_NP = self.R_NP
 
-        A_R, A_P, V_eff = self.geometric_parameters( R_NP = R_NP, 
+        if self.model == "shaw":
+            """Calculate binding constant using results from Shaw's paper"""
+            r_max_3p4K = self.R_max_3p4K 
+            r_ee_2K = self.R_ee_2K
+            v_bind = r_max_3p4K**3
+
+            A_R, A_P, V_eff = self.geometric_parameters( R_NP = R_NP, 
                                                     R_long = r_max_3p4K, 
                                                     R_short = r_ee_2K )
 
-        N_L = sigma_L * A_P
-        N_R = sigma_R * A_R
+            N_L = sigma_L * A_P
+            N_R = sigma_R * A_R
 
-        chi_LR = K0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
-        print( f"shaw, chi_LR: {chi_LR}" )
-        K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
-
-        if verbose:
-            print( f"K bind: {K_bind}" )
-
-        return K_bind
-    
-    def calculate_binding_constant_simple( self, R_NP, sigma_L,
-                                          sigma_R, N_PEG_3p4K, 
-                                          N_PEG_2K, a, K0, model = "discrete", 
-                                          verbose = False):
-        """Calculate binding constant using my initial approximation, as previously done"""
-        r_ee_long, r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
-        #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
-        #v_bind = r_ee_long**3
-        #f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
-        #A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
-        #N_L = sigma_L * A_p
-        #A_R = self.A_R( R_NP = R_NP, R_long = r_ee_long, R_min = r_ee_short )
-        #N_R = sigma_R * A_R
-
-        nm = 1.0
-        r_max_3p4K = 11 * nm
-        r_ee_2K = 3.4 * nm
-
-        f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
-        A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
-        N_L = sigma_L * A_p
-        A_R = self.A_R( R_NP = R_NP, R_long = r_max_3p4K, R_min = r_ee_2K )
-        N_R = sigma_R * A_R
-
-        print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
-
-        v_bind = r_max_3p4K**3
-        if model == "discrete":
-            chi_LR = self.chi_LR( r_ave_bond, N_PEG_3p4K, a, K0 )
+            chi_LR = K_0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
+            print( f"shaw, chi_LR: {chi_LR}" )
             K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
-        elif model == "positional":
-            K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, verbose = verbose ) )
-        return K_bind
+
+            if verbose:
+                print( f"K bind: {K_bind}" )
+
+            return K_bind
+        
+        elif self.model == ( "simple" or "average" ):
+            print( "HEEEEEEEREEEEEEEEEEE")
+            """Calculate binding constant using my initial approximation, as previously done"""
+            r_ee_long = self.r_ee( N = self.N_long, a = self.a_mono )
+            r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
+            #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
+            #v_bind = r_ee_long**3
+            #f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
+            #A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
+            #N_L = sigma_L * A_p
+            #A_R = self.A_R( R_NP = R_NP, R_long = r_ee_long, R_min = r_ee_short )
+            #N_R = sigma_R * A_R
+
+            nm = 1.0
+            r_max_3p4K = 11 * nm
+            r_ee_2K = 3.4 * nm
+
+            f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
+            A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
+            N_L = sigma_L * A_p
+            A_R = self.A_R( R_NP = R_NP, R_long = r_max_3p4K, R_min = r_ee_2K )
+            N_R = sigma_R * A_R
+
+            print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
+
+            v_bind = r_max_3p4K**3
+            if model == "average":
+                chi_LR = self.chi_LR( r_ave_bond, N_PEG_3p4K, a, K0 )
+                K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
+            elif model == "simple":
+                K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, verbose = verbose ) )
+            return K_bind
     
-    def calculate_binding_constant_saddle(self, R_NP, sigma_L, sigma_polymer, sigma_R, N, a, K0, z_max, verbose = False):
-        """Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
-        def force(h):
-            return 2 * np.pi * R_NP * self.W_total(h, sigma_L, sigma_polymer, sigma_R, N, a, K0, verbose = verbose )
+        elif self.model == ( "saddle" ):
+            z_max = self.N_long * self.a_mono
+            #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
+            def force(h):
+                return 2 * np.pi * R_NP * self.W_total(h, sigma_L = sigma_L, 
+                                                       sigma_polymer = sigma_polymer, 
+                                                       sigma_R = sigma_R, 
+                                                       N = self.N_long, 
+                                                       a = self.a_mono, 
+                                                       K0 = K0, 
+                                                       verbose = verbose 
+                                                       )
         
-        # Find equilibrium binding distance where W_total = 0
-        def find_z_bind(h):
-            return self.W_total(h, sigma_L, sigma_polymer, sigma_R, N, a, K0)
+            # Find equilibrium binding distance where W_total = 0
+            def find_z_bind(h):
+                return self.W_total(h, sigma_L = sigma_L, 
+                                    sigma_polymer = sigma_polymer, 
+                                    sigma_R = sigma_R, 
+                                    N = self.N_long, 
+                                    a = self.a_mono, 
+                                    K0 = K0, 
+                                    verbose = verbose 
+                                    )
 
-        R_ee, _, _ = self.distances( N, a )
+            R_ee = self.r_ee( N, a ) 
 
-        initial_guess = R_ee
-        bounds = [(0.0, z_max)]
-        result = minimize(find_z_bind, initial_guess, bounds=bounds)
-        z_bind = result.x[ 0 ]
+            initial_guess = R_ee
+            bounds = [(0.0, z_max)]
+            result = minimize(find_z_bind, initial_guess, bounds=bounds)
+            z_bind = result.x[ 0 ]
         
-        if z_bind > z_max:
-            raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
+            if z_bind > z_max:
+                raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
 
-        if verbose:
-            print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
+            if verbose:
+                print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
 
-        # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
-        dh = 1e-8  # Small step for numerical derivative
-        F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
-        print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
-        print( f'Second derivative at minimum: {F_prime}' )
-        
-        # Binding constant using saddle point approximation
-        A_L = mp.pi * N * a**2  # Approximate area spanned by ligand
-        energy_min = np.trapz([force(h) for h in np.linspace(z_bind, z_max, 100)],
-                              np.linspace(z_bind, z_max, 100))
-        
-        if verbose:
-            print( f'Energy minimum: {energy_min}' )
+            # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
+            dh = 1e-8  # Small step for numerical derivative
+            F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
+            print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
             print( f'Second derivative at minimum: {F_prime}' )
-
-        K_bind = A_L * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.kT))
-        return K_bind
-    
-    def calculate_binding_constant(self, R_NP, sigma_L, sigma_polymer, sigma_R, N, a, K0, z_max, verbose=False):
-        """Calculate binding constant using Derjaguin approximation"""
-        def force(h):
-            W_total = self.W_total(h, sigma_L, sigma_polymer, sigma_R, N, a, K0, verbose = verbose )
+        
+            # Binding constant using saddle point approximation
+            Area = mp.pi * self.N_long * self.a_mono**2  # Approximate area spanned by ligand
+            energy_min = np.trapz([force(h) for h in np.linspace(z_bind, z_max, 100)],
+                                  np.linspace(z_bind, z_max, 100))
+        
             if verbose:
-                print( f'W_total: {W_total} (kbT/nm^2)' )
-                print( f'Force: {2 * mp.pi * R_NP * W_total} (kbT/nm)' )
-            return 2 * mp.pi * R_NP * W_total
+                print( f'Energy minimum: {energy_min}' )
+                print( f'Second derivative at minimum: {F_prime}' )
 
-        def A(h):
-            force_values = [force(x) for x in np.linspace(h, z_max, 100)]
-            x_values = np.linspace(h, z_max, 100)
-            Ah = np.trapz(force_values, x_values )
-            minAh = np.min(force_values) * ( z_max - h )
-            assert Ah >= minAh, AssertionError( f'This should not happen: Ah: {Ah} < minAh: {minAh}' )
-            if verbose:
-                print( f'h {h}, A(h) {Ah}' )
+            K_bind = Area * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.kT))
+            return K_bind
+        
+        elif self.model == "exact":
+            #"""Calculate binding constant using Derjaguin approximation"""
+            z_max = self.N_long * self.a_mono
+            def force(h):
+                W_total = self.W_total(h, sigma_L = sigma_L, 
+                                                       sigma_polymer = sigma_polymer, 
+                                                       sigma_R = sigma_R, 
+                                                       N = self.N_long, 
+                                                       a = self.a_mono, 
+                                                       K0 = K0, 
+                                                       verbose = verbose 
+                                                       )
+                if verbose:
+                    print( f'W_total: {W_total} (kbT/nm^2)' )
+                    print( f'Force: {2 * mp.pi * R_NP * W_total} (kbT/nm)' )
+                return 2 * mp.pi * R_NP * W_total
 
-            return Ah
+            def A(h):
+                force_values = [force(x) for x in np.linspace(h, z_max, 100)]
+                x_values = np.linspace(h, z_max, 100)
+                Ah = np.trapz(force_values, x_values )
+                minAh = np.min(force_values) * ( z_max - h )
+                assert Ah >= minAh, AssertionError( f'This should not happen: Ah: {Ah} < minAh: {minAh}' )
+                if verbose:
+                    print( f'h {h}, A(h) {Ah}' )
+
+                return Ah
         
-        def integrand(h):
-            return mp.exp(-A(h)/self.kT)
+            def integrand(h):
+                return mp.exp(-A(h)/self.kT)
         
-        A_L = mp.pi * N * a**2  # Approximate area spanned by ligand
+            A_L = mp.pi * N * a**2  # Approximate area spanned by ligand
         
-        K_bind = A_L *  np.trapz([integrand(h) for h in np.linspace(0, z_max, 100)],
-                                np.linspace(0, z_max, 100))
-        return K_bind
+            K_bind = A_L *  np.trapz([integrand(h) for h in np.linspace(0, z_max, 100)],
+                                    np.linspace(0, z_max, 100))
+            return K_bind
     
-    def calculate_bound_fraction(self, K_bind, NP_conc, cell_conc, R_NP, A_cell, verbose = False):
+    def calculate_bound_fraction(self, K_bind, verbose = False):
+        A_cell = self.A_cell
+        NP_conc = self.NP_conc
+        cell_conc = self.cell_conc
+        R_NP = self.R_NP
         """Calculate fraction of bound nanoparticles"""
         if K_bind == np.inf:
             return 1.0
