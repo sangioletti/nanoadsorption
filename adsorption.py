@@ -26,20 +26,70 @@ class MultivalentBinding:
         else:
             return prefactor * exp_term * erf_num/erf_den
         
-    def distances(self, N, a ):
+    def r_ee( self, N, a, polymer_model = "gaussian" ):
         """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
         have equal probability."""
-        R_ee = np.sqrt( N ) * a
-        R_bind_ave = R_ee * 4 * np.sqrt(2) / 3.0
-        R_max = np.sqrt( 8.0 ) * R_ee
-        return R_ee, R_bind_ave, R_max
+        if polymer_model == ( "gaussian" or "ideal" ):
+            R_ee = np.sqrt( N ) * a
+        elif polymer_model == ( "self_avoiding_walk" or "Flory" ):
+            nu = 3.0/5.0
+            R_ee = N**(nu) * a
+        elif polymer_model == ( "Alexander-DeGennes" or "brush" ):
+            raise NotImplementedError( f'Polymer model {polymer_model} not implemented' )
+        return R_ee
+    
+    def r_ave_bond(self, R_ee ):
+        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
+        have equal probability."""
+        return R_ee * 4 * np.sqrt(2) / 3.0
+    
+    def r_ee_max( self, R_ee ):
+        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
+        have equal probability."""
+        return np.sqrt( 8.0 ) * R_ee
+    
+    def geometric_parameters( self, R_NP, R_long, R_short ):
+        #Calculate the 'active area' containing RECEPTORS interacting with the NP
+        r_cone_squared = ( R_NP + R_long )**2 - ( R_NP + R_short )**2 
+        A_R = np.pi * r_cone_squared
+
+        #The 'active area' containing ligands LIGANDS interacting with the NP
+        # Step1: calculate the cosine of the aperture angle
+        cos_alpha = ( R_NP + R_short ) / ( R_NP + R_long )
+        f1 = 1.0 - cos_alpha 
+        # Step2: multiply by 2*pi*R to obtain the area of the spherical patch
+        A_P = 2.0 * np.pi * R_NP**2 * f1
+
+        # Calculate effective volume where ligand-receptors reside:
+        # Veff = V_cone - V_small_cone - V_spherical_patch
+        height_cone = R_NP + R_short
+        V_cone = np.pi / 3.0 * r_cone_squared * height_cone
+
+        r_small_cone_squared = R_NP**2 * ( 1.0 - cos_alpha**2 ) #r_cone = RNP * sin_alpha
+        height_small_cone = R_NP * cos_alpha
+        V_small_cone = np.pi / 3.0 * r_small_cone_squared * height_small_cone 
         
-    def chi_LR(self, r_bond, N, a, K0):
+        V_spherical_patch = 2.0 / 3.0 * np.pi * R_NP**3 * f1
+        V_eff = V_cone - V_small_cone - V_spherical_patch
+
+        #In previous notes from Lennart, these were the formulas. Note they are equivalent to 
+        #V_eff = V_cone - V_spherical_patch
+        #factor1 = ((R_NP + R_long)**2-(R_NP+ R_short )**2)*(R_NP+R_short) 
+        #factor2 = 2.0 * R_NP**3 * ( 1.0 - (R_NP+R_ee_short) / (R_NP+R_long) )
+        #Veff = np.pi / 3.0 * ( factor1 - factor2 )
+
+        return A_R, A_P, V_eff
+
+    def chi_LR(self, r_bond, N, a, K0, model = "gaussian" ):
         """Calculate average bond strength between ligand-receptor pairs.
         Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
         (ligands or receptors)"""
-        r_ee, _, _ = self.distances( N, a )
-        chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
+        if model == "gaussian":
+            r_ee = self.r_ee( N, a )
+            chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
+        if model == "shaw":
+            _, _, V_eff = self.geometric_parameters( R_NP = , R_long = , R_short = )
+            chi_conf = K0 / V_eff
         return K0 * chi_conf
     
     def unbinding_probs(self, sigma_L, sigma_R, K_LR):
@@ -138,15 +188,17 @@ class MultivalentBinding:
             return np.inf
         else:
             bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
-            print( f"discrete, pL {p_L}, chi_LR {chi_LR}")
-            print( f"discrete, pR {float(p_R):3.5e}")
 
         if p_R == 0:
             return np.inf
         else:
             bond_energy_R = N_R * (mp.log(p_R) + 0.5*(1 - p_R))
         if verbose:
-            print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
+            print( f'Bond energy: {bond_energy_L + bond_energy_R}' )
+
+        print( f"discrete, pL {p_L}, chi_LR {chi_LR}")
+        print( f"discrete, pR {float(p_R):3.5e}")
+        print( f'Bond energy - L: {bond_energy_L} R: {bond_energy_R}' )
 
         return bond_energy_L + bond_energy_R
         
@@ -175,10 +227,10 @@ class MultivalentBinding:
             p_R_min = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( 0, N, a, K0 )) )
             p_R_max = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( r_max, N, a, K0 )) )
             print( f"positional, p_R( max ) {p_R_max:3.5e} p_R_min {p_R_min:3.5e}")
-        print( f'Bond energy density: L:{bond_energy_L}  R:{bond_energy_R}' )
+        print( f'Bond energy - L: {bond_energy_L} R: {bond_energy_R}' )
 
         if verbose:
-            print( f'Bond energy density: {bond_energy_L + bond_energy_R}' )
+            print( f'Bond energy: {bond_energy_L + bond_energy_R}' )
 
         return bond_energy_L + bond_energy_R
     
@@ -244,18 +296,14 @@ class MultivalentBinding:
         r_ee_2K = 3.4 * nm
         v_bind = r_max_3p4K**3
 
-        f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
-        A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
-        N_L = sigma_L * A_p
-        A_R = np.pi * ( R_NP/2 + r_max_3p4K )**2 - ( R_NP/2 + r_ee_2K )**2
+        A_R, A_P, V_eff = self.geometric_parameters( R_NP = R_NP, 
+                                                    R_long = r_max_3p4K, 
+                                                    R_short = r_ee_2K )
+
+        N_L = sigma_L * A_P
         N_R = sigma_R * A_R
 
-        d = R_NP / 2.0
-        factor1 = ((d/2 + r_max_3p4K)**2-(d/2+ r_ee_2K )**2)*(d/2+r_ee_2K) 
-        factor2 = d**3 / 4.0 * ( 1.0-(d/2+r_ee_2K) / (d/2+r_max_3p4K))
-        Veff = np.pi / 3.0 * ( factor1 - factor2 )
-
-        chi_LR = K0 / Veff #1/Veff is an effective density. The lower the harder to bond
+        chi_LR = K0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
         print( f"shaw, chi_LR: {chi_LR}" )
         K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
 
@@ -275,7 +323,7 @@ class MultivalentBinding:
         #f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
         #A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
         #N_L = sigma_L * A_p
-        #A_R = np.pi * ( R_NP/2 + r_ee_long )**2 - ( R_NP/2 + r_ee_short )**2
+        #A_R = self.A_R( R_NP = R_NP, R_long = r_ee_long, R_min = r_ee_short )
         #N_R = sigma_R * A_R
 
         nm = 1.0
@@ -285,7 +333,7 @@ class MultivalentBinding:
         f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
         A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
         N_L = sigma_L * A_p
-        A_R = np.pi * ( R_NP/2 + r_max_3p4K )**2 - ( R_NP/2 + r_ee_2K )**2
+        A_R = self.A_R( R_NP = R_NP, R_long = r_max_3p4K, R_min = r_ee_2K )
         N_R = sigma_R * A_R
 
         print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
@@ -306,23 +354,24 @@ class MultivalentBinding:
         # Find equilibrium binding distance where W_total = 0
         def find_z_bind(h):
             return self.W_total(h, sigma_L, sigma_polymer, sigma_R, N, a, K0)
-        
-        initial_guess = np.sqrt(N) * a**2
+
+        R_ee, _, _ = self.distances( N, a )
+
+        initial_guess = R_ee
         bounds = [(0.0, z_max)]
         result = minimize(find_z_bind, initial_guess, bounds=bounds)
         z_bind = result.x[ 0 ]
         
         if z_bind > z_max:
-            Ree = np.sqrt( N ) * a
-            raise ValueError( f'Equilibrium binding distance is too large z/Ree: {z_bind/Ree}' )
+            raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
 
         if verbose:
-            Ree = np.sqrt( N ) * a
-            print( f'Equilibrium binding distance, normalized to Ree: {z_bind / Ree }' )       
+            print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
 
         # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
         dh = 1e-8  # Small step for numerical derivative
         F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
+        print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
         print( f'Second derivative at minimum: {F_prime}' )
         
         # Binding constant using saddle point approximation
