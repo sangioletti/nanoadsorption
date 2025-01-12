@@ -5,11 +5,11 @@ from scipy.integrate import quad
 from mpmath import mp
 
 class MultivalentBinding:
-    def __init__(self, kT=1.0, R_NP, N_long, N_short, a_mono, 
-                 A_cell, NP_conce, cell_conc, 
+    def __init__(self, kT, R_NP, N_long, N_short, a_mono, 
+                 A_cell, NP_conc, cell_conc, 
                  binding_model = None, 
                  polymer_model = "gaussian"):
-        self.kT = kT  # Thermal energy (kB*T)
+        self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
         self.nm2 = ( self.nm )**2 # Sets the units of area
         self.nm3 = ( self.nm )**3 # Sets the units of volume
@@ -23,7 +23,7 @@ class MultivalentBinding:
         # However, I notice they are taken at inconsistent values of the grafting distance
         # since the 3.4K is smaller which I am not sure is really correct.
         self.R_max_3p4K = 11.1 * self.nm
-        self.R_ee_2K = 3.9 * nm #Initial calculations by Lennart used 4.0 but difference is irrelevant
+        self.R_ee_2K = 3.9 * self.nm #Initial calculations by Lennart used 4.0 but difference is irrelevant
         self.polymer_model = polymer_model 
         self.binding_model = binding_model
         self.A_cell = A_cell
@@ -59,12 +59,12 @@ class MultivalentBinding:
         
     def r_ee( self, N, a ):
         """Calculate the average end-to-end distance in a polymer"""
-        if self.polymer_model == ( "gaussian" or "ideal" ):
+        if self.polymer_model in ( "gaussian", "ideal" ):
             R_ee = np.sqrt( N ) * a
-        elif self.polymer_model == ( "self_avoiding_walk" or "Flory" ):
+        elif self.polymer_model in ( "self_avoiding_walk", "Flory" ):
             nu = 3.0/5.0
             R_ee = N**(nu) * a
-        elif self.polymer_model == ( "Alexander-DeGennes" or "brush" ):
+        elif self.polymer_model in ( "Alexander-DeGennes", "brush" ):
             R_ee = self.R_ee_2K
         else:
             raise ValueError( f'Polymer model {self.polymer_model} not recognized' )
@@ -98,12 +98,17 @@ class MultivalentBinding:
     
     def geometric_parameters( self, R_NP, R_long, R_short ):
         #Calculate the 'active area' containing RECEPTORS interacting with the NP
-        r_cone_squared = ( R_NP + R_long )**2 - ( R_NP + R_short )**2 
+        height_cone = R_NP + R_short
+        hypotenus_cone = R_NP + R_long
+        r_cone_squared = hypotenus_cone**2 - height_cone**2
         A_R = np.pi * r_cone_squared
 
         #The 'active area' containing ligands LIGANDS interacting with the NP
         # Step1: calculate the cosine of the aperture angle
         cos_alpha = ( R_NP + R_short ) / ( R_NP + R_long )
+        assert cos_alpha >= 0.0, AssertionError( f'cos_alpha: {cos_alpha} < 0.0 but should not in this geometry' )
+        sin_alpha = np.sqrt( 1.0 - cos_alpha**2 )
+        assert cos_alpha <= 1.0, AssertionError( f'cos_alpha: {cos_alpha} > 1.0' )
         f1 = 1.0 - cos_alpha 
         # Step2: multiply by 2*pi*R to obtain the area of the spherical patch
         A_P = 2.0 * np.pi * R_NP**2 * f1
@@ -112,33 +117,26 @@ class MultivalentBinding:
         # Veff = V_cone - V_small_cone - V_spherical_patch
         height_cone = R_NP + R_short
         V_cone = np.pi / 3.0 * r_cone_squared * height_cone
-
-        r_small_cone_squared = R_NP**2 * ( 1.0 - cos_alpha**2 ) #r_cone = RNP * sin_alpha
-        height_small_cone = R_NP * cos_alpha
-        V_small_cone = np.pi / 3.0 * r_small_cone_squared * height_small_cone 
-        
         V_spherical_patch = 2.0 / 3.0 * np.pi * R_NP**3 * f1
-        V_eff = V_cone - V_small_cone - V_spherical_patch
+        V_eff = V_cone - V_spherical_patch
 
-        #In previous notes from Lennart, these were the formulas. Note they are equivalent to 
-        #V_eff = V_cone - V_spherical_patch
-        #factor1 = ((R_NP + R_long)**2-(R_NP+ R_short )**2)*(R_NP+R_short) 
-        #factor2 = 2.0 * R_NP**3 * ( 1.0 - (R_NP+R_ee_short) / (R_NP+R_long) )
-        #Veff = np.pi / 3.0 * ( factor1 - factor2 )
+        error_string1 = f"R_NP {R_NP}, R_long {R_long} R_short {R_short} \n"
+        error_string2 = f"V_cone {V_cone:3.5e} V_spherical_patch {V_spherical_patch:3.5e}"
+        assert V_eff > 0, AssertionError( f'Effective volume is negative: {V_eff} \n' + error_string1 + error_string2 )
 
         return A_R, A_P, V_eff
 
-    def chi_LR(self, r_bond, N, a, K0, model = "gaussian" ):
+    def chi_LR(self, r_bond, N, a, K0 ):
         """Calculate average bond strength between ligand-receptor pairs.
         Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
         (ligands or receptors)"""
-        if self.binding_model == ( "simple" or "average" ):
+        if self.binding_model in ( "simple", "average" ):
             r_ee = self.r_ee( N, a )
             if self.polymer_model == "gaussian":
                 chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
             else:
                 raise NotImplementedError( f'Bond cost for polymer model {self.polymer_model} not implemented' )  
-        if model == "shaw":
+        if self.binding_model == "shaw":
             R_NP = self.R_NP
             R_long = self.R_max_3p4K
             R_short = self.R_ee_2K
@@ -148,7 +146,10 @@ class MultivalentBinding:
     
     def unbinding_probs( self, sigma_L, sigma_R, K_LR ):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
-        assert self.model == ( "exact" or "saddle" ), AssertionError( f'Only usable with exact and saddle point models' )
+        cond1 = self.binding_model == "exact" 
+        cond2 = self.binding_model == "saddle"
+        error_string = f"""Only usable with exact and saddle point models, detected {self.binding_model}"""
+        assert ( cond1 or cond2 ), AssertionError( error_string )
         sigma_L = mp.mpf(sigma_L)
         sigma_R = mp.mpf(sigma_R)
         check = isinstance( K_LR, np.ndarray)
@@ -168,7 +169,7 @@ class MultivalentBinding:
     
     def unbinding_probs_discrete(self, N_L, N_R, chi_LR):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
-        assert self.model == ( "average" or "shaw" ), AssertionError( f'Only usable with average or shaw models' )
+        assert self.binding_model in ( "average", "shaw" ), AssertionError( f'Only usable with average or shaw models' )
         N_L = mp.mpf(N_L)
         N_R = mp.mpf(N_R)
         check = isinstance( chi_LR, np.ndarray)
@@ -193,7 +194,7 @@ class MultivalentBinding:
         probability that bonds of different length have different probabilities. We 
         assume a single ligand-receptor pair type.
         """
-        assert self.model == ( "simple" ), AssertionError( f"Only usable with 'simple' models" )
+        assert self.binding_model == "simple", AssertionError( f"Only usable with 'simple' models" )
         R_ee = z_dist = self.r_ee( N, a )
         r_max = self.x_max_span( z_dist = z_dist, 
                                  max_bond_length = 3.0 * R_ee )
@@ -260,7 +261,8 @@ class MultivalentBinding:
         if p_R == 0:
             return np.inf
         else:
-            _, _, r_max = self.distances( N, a )
+            r_max = self.x_max_span( z_dist = self.r_ee( N = self.N_long , a = self.a_mono ), 
+                                    max_bond_length = 3.0 * self.r_ee( N = self.N_long, a = self.a_mono ) )
             def fun( r, pL ):
                 den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K0 )
                 p_R = 1.0 / den  
@@ -323,20 +325,20 @@ class MultivalentBinding:
     
     def W_total(self, h, sigma_L, sigma_polymer, sigma_R, N, a, K0, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        #Ree = mp.sqrt( N * a**2 )
+        Ree = self.r_ee( N, self.a_mono )
         W_bond = self.W_bond(h, sigma_L, sigma_R, N, a, K0, verbose)
         W_steric = self.W_steric(h, sigma_polymer, N, a, verbose)
         if verbose:
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant(self, K_0, sigma_L, sigma_R,
+    def calculate_binding_constant(self, K0, sigma_L, sigma_R,
                                    sigma_polymer = None,
                                    z_max = None, 
                                    verbose = False):
         R_NP = self.R_NP
 
-        if self.model == "shaw":
+        if self.binding_model == "shaw":
             """Calculate binding constant using results from Shaw's paper"""
             r_max_3p4K = self.R_max_3p4K 
             r_ee_2K = self.R_ee_2K
@@ -349,7 +351,7 @@ class MultivalentBinding:
             N_L = sigma_L * A_P
             N_R = sigma_R * A_R
 
-            chi_LR = K_0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
+            chi_LR = K0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
             print( f"shaw, chi_LR: {chi_LR}" )
             K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
 
@@ -358,40 +360,45 @@ class MultivalentBinding:
 
             return K_bind
         
-        elif self.model == ( "simple" or "average" ):
-            print( "HEEEEEEEREEEEEEEEEEE")
+        elif self.binding_model in ( "simple", "average" ):
             """Calculate binding constant using my initial approximation, as previously done"""
             r_ee_long = self.r_ee( N = self.N_long, a = self.a_mono )
-            r_ave_bond, _ = self.distances( N_PEG_3p4K, a )
-            #r_ee_short, _, _ = self.distances( N_PEG_2K, a )
-            #v_bind = r_ee_long**3
-            #f1 = 1.0 - ((R_NP/2) + r_ee_short ) / ((R_NP/2) + r_ee_long )
-            #A_p = np.pi * (R_NP/2)**2 / 2.0 * f1
-            #N_L = sigma_L * A_p
-            #A_R = self.A_R( R_NP = R_NP, R_long = r_ee_long, R_min = r_ee_short )
-            #N_R = sigma_R * A_R
+            r_ave_bond = self.r_ave_bond( z_dist = r_ee_long, max_bond_length = 3.0 * r_ee_long ) 
+            v_bind = r_ee_long**3
 
-            nm = 1.0
-            r_max_3p4K = 11 * nm
-            r_ee_2K = 3.4 * nm
+            _, A_P, _ = self.geometric_parameters( R_NP = R_NP, 
+                                                    R_long = 3 * r_ee_long, 
+                                                    R_short = r_ee_long )
+            
+            N_L = sigma_L * A_P
 
-            f1 = 1.0 - ((R_NP/2) + r_ee_2K ) / ((R_NP/2) + r_max_3p4K )
-            A_p = np.pi * (R_NP * 2)**2 / 2.0 * f1
-            N_L = sigma_L * A_p
-            A_R = self.A_R( R_NP = R_NP, R_long = r_max_3p4K, R_min = r_ee_2K )
+            x_max = self.x_max_span( z_dist = r_ee_long, max_bond_length = 3.0 * r_ee_long )
+            A_R = np.pi * x_max**2 # Approximate area spanned by a ligand, calculated assuming max length is 3 times average
+                                  # R_ee o the polymer holding the ligand
             N_R = sigma_R * A_R
 
             print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
 
-            v_bind = r_max_3p4K**3
-            if model == "average":
-                chi_LR = self.chi_LR( r_ave_bond, N_PEG_3p4K, a, K0 )
-                K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
-            elif model == "simple":
-                K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L, sigma_R, N_PEG_3p4K, a, K0, verbose = verbose ) )
+            v_bind = r_ee_long**3
+            if self.binding_model == "average":
+                chi_LR = self.chi_LR( r_bond = r_ave_bond, 
+                                     N = self.N_long,
+                                     a = self.a_mono,
+                                     K0 = K0 )
+                K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L = N_L, 
+                                                                N_R = N_R, 
+                                                                chi_LR = chi_LR, 
+                                                                verbose = verbose ) )
+            elif self.binding_model == "simple":
+                K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L = N_L, 
+                                                                  sigma_R = sigma_R, 
+                                                                  N = self.N_long, 
+                                                                  a = self.a_mono, 
+                                                                  K0 = K0, 
+                                                                  verbose = verbose ) )
             return K_bind
     
-        elif self.model == ( "saddle" ):
+        elif self.binding_model == "saddle":
             z_max = self.N_long * self.a_mono
             #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
             def force(h):
@@ -415,7 +422,7 @@ class MultivalentBinding:
                                     verbose = verbose 
                                     )
 
-            R_ee = self.r_ee( N, a ) 
+            R_ee = self.r_ee( N = self.N_long, a = self.a_mono ) 
 
             initial_guess = R_ee
             bounds = [(0.0, z_max)]
@@ -446,15 +453,17 @@ class MultivalentBinding:
             K_bind = Area * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.kT))
             return K_bind
         
-        elif self.model == "exact":
+        elif self.binding_model == "exact":
             #"""Calculate binding constant using Derjaguin approximation"""
             z_max = self.N_long * self.a_mono
+            N = self.N_long
+            a = self.a_mono
             def force(h):
                 W_total = self.W_total(h, sigma_L = sigma_L, 
                                                        sigma_polymer = sigma_polymer, 
                                                        sigma_R = sigma_R, 
-                                                       N = self.N_long, 
-                                                       a = self.a_mono, 
+                                                       N = N, 
+                                                       a = a, 
                                                        K0 = K0, 
                                                        verbose = verbose 
                                                        )

@@ -37,7 +37,7 @@ NmonoLong = Nmonomers( 3400 * g ) # Number of monomers in PEG3400 chain
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in PEG3400 chain
 amono = 0.34 * nm # Monomer size in PEG chain
 PEG_max_extension = NmonoLong * amono # Max extension of the PEG chain
-KD = 0.001 * nM # Dissociation constant in solution between ligand-receptor
+KD = 1.0 * nM # Dissociation constant in solution between ligand-receptor
 K0 = KD**(-1) # Binding constant in solution between ligand-receptor
 R_NP = 35 * nm # Nanoparticle radius in units of length
 v_bind = np.pi * R_NP**2 * PEG_max_extension # Volume of binding site 
@@ -62,18 +62,48 @@ verbose = False
 n_sampling_points = 20 #Number of sampling points for the receptor surface density
 
 # Create the system
-system = MultivalentBinding()
-
-# Calculate the value of W_total for a range of h and the maximum density of ligands and receptors
-with open( 'W_total.dat', 'w+' ) as f:
-    sigma_R = sigma_R_max
-    Ree = np.sqrt( NmonoLong ) * amono
-    for h in np.linspace( 0.0, PEG_max_extension, 50 ):
-        W_total = system.W_total( h=h, sigma_L=sigma_L, sigma_polymer=sigma_L, 
-                                     sigma_R=sigma_R, N=NmonoLong, a=amono, K0=K0, verbose=verbose )
-        out1 = float(h/(1/nm))
-        out2 = float(W_total)
-        f.write( f'{out1/Ree:5.3e} {out2:5.3e} \n' )
+system_exact = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+                            N_short = NmonoShort,
+                            a_mono = amono, 
+                            binding_model = "exact", 
+                            polymer_model = "gaussian",
+                            A_cell = A_cell, 
+                            NP_conc = NP_conc, 
+                            cell_conc = cell_conc, 
+                            )
+system_saddle = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+                            N_short = NmonoShort, 
+                            a_mono = amono, 
+                            binding_model = "saddle", 
+                            polymer_model = "gaussian",
+                            A_cell = A_cell, 
+                            NP_conc = NP_conc, 
+                            cell_conc = cell_conc, ) 
+system_simple = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+                            N_short = NmonoShort, 
+                            a_mono = amono, 
+                            binding_model = "simple", 
+                            polymer_model = "gaussian",
+                            A_cell = A_cell, 
+                            NP_conc = NP_conc, 
+                            cell_conc = cell_conc, )
+system_average = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+                            N_short = NmonoShort, 
+                            a_mono = amono, 
+                            binding_model = "average", 
+                            polymer_model = "gaussian",
+                            A_cell = A_cell, 
+                            NP_conc = NP_conc, 
+                            cell_conc = cell_conc,) 
+system_lennart = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+                            N_short = NmonoShort, 
+                            a_mono = amono, 
+                            binding_model = "shaw", 
+                            polymer_model = "Alexander-DeGennes",
+                            A_cell = A_cell, 
+                            NP_conc = NP_conc, 
+                            cell_conc = cell_conc, 
+                            )
 
 # Store everything in a file, so we can plot it later
 with open( 'adsorption.dat', 'w+' ) as f:
@@ -85,107 +115,77 @@ with open( 'adsorption.dat', 'w+' ) as f:
     print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
     f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
     for sigma_R in np.logspace( min_exp, max_exp, n_sampling_points ):
-        K_bind = system.calculate_binding_constant( R_NP=R_NP, sigma_L = sigma_L, 
+        K_bind = system_exact.calculate_binding_constant( sigma_L = sigma_L, 
                                                     sigma_polymer = sigma_L, 
-                                                    sigma_R=sigma_R, N=NmonoLong, 
-                                                    a=amono, K0=K0, 
-                                                    z_max=PEG_max_extension,
+                                                    sigma_R=sigma_R, 
+                                                    K0=K0, 
                                                     verbose=verbose 
                                                     )
         print( "##################")
         print( "##################")
-        K_bind_saddle_approx = system.calculate_binding_constant_saddle(R_NP = R_NP, sigma_L = sigma_L, 
+        K_bind_saddle = system_saddle.calculate_binding_constant( 
+                                                          sigma_L = sigma_L, 
                                                           sigma_polymer = sigma_L, 
                                                           sigma_R = sigma_R, 
-                                                          N = NmonoLong, 
-                                                          a = amono, 
                                                           K0 = K0, 
-                                                          z_max=PEG_max_extension, 
                                                           verbose = verbose)
         
         print( "##################")
         print( "##################")
-        K_bind_simple_discrete = system.calculate_binding_constant_simple( R_NP, 
-                                                            sigma_L = sigma_L, 
-                                                            sigma_R = sigma_R, 
-                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ), 
-                                                            N_PEG_2K = Nmonomers( MW = 2000*g ), 
-                                                            a = amono, 
-                                                            K0 = K0, 
-                                                            model = "discrete", 
-                                                            verbose = False)
-        
+        K_bind_average = system_average.calculate_binding_constant( 
+                                                          sigma_L = sigma_L, 
+                                                          sigma_polymer = sigma_L, 
+                                                          sigma_R = sigma_R, 
+                                                          K0 = K0, 
+                                                          verbose = verbose)
         print( "##################")
         print( "##################")
-        K_bind_simple_positional = system.calculate_binding_constant_simple( R_NP, 
-                                                            sigma_L = sigma_L, 
-                                                            sigma_R = sigma_R, 
-                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ), 
-                                                            N_PEG_2K = Nmonomers( MW = 2000*g ), 
-                                                            a = amono, 
-                                                            K0 = K0, 
-                                                            model = "positional", 
-                                                            verbose = False)
+        K_bind_simple = system_simple.calculate_binding_constant( 
+                                                          sigma_L = sigma_L, 
+                                                          sigma_polymer = sigma_L, 
+                                                          sigma_R = sigma_R, 
+                                                          K0 = K0, 
+                                                          verbose = verbose)
         print( "##################")
         print( "##################")
-        K_bind_shaw = system.calculate_binding_constant_shaw( R_NP, sigma_L, sigma_R, 
-                                                            N_PEG_3p4K = Nmonomers( MW = 3400*g ),  
-                                                            N_PEG_2K = Nmonomers( MW = 2000*g ),   
-                                                            a = amono, 
-                                                            K0 = K0, 
-                                                            verbose = False)
+        K_bind_shaw = system_lennart.calculate_binding_constant( 
+                                                          sigma_L = sigma_L, 
+                                                          sigma_polymer = sigma_L, 
+                                                          sigma_R = sigma_R, 
+                                                          K0 = K0, 
+                                                          verbose = verbose)
         
         print( "------------------" )
         print( "------------------" )
         print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
-        print( f'Effective dissociation constant (saddle approx) (M): {float((1.0 / K_bind_saddle_approx) / M):5.3e}' )
-        print( f'Effective dissociation constant (discrete approx - simple) (M): {float((1.0 / K_bind_simple_discrete) / M):5.3e}' )
-        print( f'Effective dissociation constant (discrete approx - positional ) (M): {float((1.0 / K_bind_simple_positional) / M):5.3e}' )
+        print( f'Effective dissociation constant (saddle approx) (M): {float((1.0 / K_bind_saddle) / M):5.3e}' )
+        print( f'Effective dissociation constant (discrete approx - simple) (M): {float((1.0 / K_bind_simple) / M):5.3e}' )
+        print( f'Effective dissociation constant (discrete approx - average ) (M): {float((1.0 / K_bind_average) / M):5.3e}' )
         print( f'Effective dissociation constant (Shaw ) (M): {float((1.0 / K_bind_shaw) / M):5.3e}' )
         print( f'Effective density compared to bulk: {float(K_bind / v_bind):5.3e}' )
         # Now we can calculate the adsorbed fraction
-        adsorbed_fraction = system.calculate_bound_fraction(
-                                                            K_bind=K_bind, NP_conc=NP_conc, 
-                                                            cell_conc=cell_conc, R_NP=R_NP, 
-                                                            A_cell=A_cell
-                                                            )
-        adsorbed_fraction_saddle = system.calculate_bound_fraction(
-                                                            K_bind=K_bind_saddle_approx, NP_conc=NP_conc, 
-                                                            cell_conc=cell_conc, R_NP=R_NP, 
-                                                            A_cell=A_cell
-                                                            )
-        adsorbed_fraction_discrete = system.calculate_bound_fraction(
-                                                            K_bind=K_bind_simple_discrete, NP_conc=NP_conc, 
-                                                            cell_conc=cell_conc, R_NP=R_NP, 
-                                                            A_cell=A_cell
-                                                            )
-        adsorbed_fraction_positional = system.calculate_bound_fraction(
-                                                            K_bind=K_bind_simple_positional, NP_conc=NP_conc, 
-                                                            cell_conc=cell_conc, R_NP=R_NP, 
-                                                            A_cell=A_cell
-                                                            )
-        adsorbed_fraction_shaw = system.calculate_bound_fraction(
-                                                            K_bind=K_bind_shaw, NP_conc=NP_conc, 
-                                                            cell_conc=cell_conc, R_NP=R_NP, 
-                                                            A_cell=A_cell
-                                                            )
+        adsorbed_fraction = system_exact.calculate_bound_fraction( K_bind=K_bind )
+        adsorbed_fraction_saddle = system_saddle.calculate_bound_fraction( K_bind=K_bind_saddle )
+        adsorbed_fraction_simple = system_simple.calculate_bound_fraction( K_bind = K_bind_simple )
+        adsorbed_fraction_average = system_average.calculate_bound_fraction( K_bind = K_bind_average )
+        adsorbed_fraction_shaw = system_lennart.calculate_bound_fraction( K_bind=K_bind_shaw )
         # Print the adsorbed fraction
         out1 = float(sigma_R/(1/um2))
         out2 = float((1 / K_bind) / M)
         out3 = float(adsorbed_fraction)
-        out4 = float((1 / K_bind_saddle_approx) / M)
+        out4 = float((1 / K_bind_saddle) / M)
         out5 = float(adsorbed_fraction_saddle)
-        out6 = float((1 / K_bind_simple_discrete) / M)
-        out7 = float(adsorbed_fraction_discrete)
-        out8 = float((1 / K_bind_simple_positional) / M)
-        out9 = float(adsorbed_fraction_positional)
+        out6 = float((1 / K_bind_simple) / M)
+        out7 = float(adsorbed_fraction_simple)
+        out8 = float((1 / K_bind_average) / M)
+        out9 = float(adsorbed_fraction_average)
         out10 = float((1 / K_bind_shaw) / M)
         out11 = float(adsorbed_fraction_shaw)
         f.write( f'{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e}  {out6:5.3e} {out7:5.3e} {out8:5.3e} {out9:5.3e} {out10:5.3e} {out11:5.3e}\n' )
         print( f'Adsorbed fraction, exact: {out3:5.3e}' )
         print( f'Adsorbed fraction, saddle: {out5:5.3e}' )
-        print( f'Adsorbed fraction, discrete: {out7:5.3e}' )
-        print( f'Adsorbed fraction, positional: {out9:5.3e}' )
+        print( f'Adsorbed fraction, simple: {out7:5.3e}' )
+        print( f'Adsorbed fraction, average: {out9:5.3e}' )
         print( f'Adsorbed fraction, shaw: {out11:5.3e}' )
         print( "------------------" )
         print( "------------------" )
@@ -199,10 +199,21 @@ plt.xscale( 'log' )
 plt.yscale( 'linear' )
 plt.plot( data[:,0], data[:,2], label='Exact', linestyle='solid' )
 plt.plot( data[:,0], data[:,4], label='Saddle', linestyle='dashed' )
-plt.plot( data[:,0], data[:,6], label='Discrete', linestyle='-.' ) 
-plt.plot( data[:,0], data[:,8], label='Positional', linestyle='--' )
+plt.plot( data[:,0], data[:,6], label='Simple', linestyle='-.' ) 
+plt.plot( data[:,0], data[:,8], label='Average', linestyle='--' )
 plt.plot( data[:,0], data[:,10], label='Shaw', linestyle='--' )
 plt.xlabel( 'Receptor surface density' )
 plt.ylabel( 'Adsorbed fraction' )
 plt.legend()
 plt.savefig( 'adsorption.png' )
+
+# Calculate the value of W_total for a range of h and the maximum density of ligands and receptors
+with open( 'W_total.dat', 'w+' ) as f:
+    sigma_R = sigma_R_max
+    Ree = np.sqrt( NmonoLong ) * amono
+    for h in np.linspace( 0.0, PEG_max_extension, 50 ):
+        W_total = system_exact.W_total( h=h, sigma_L=sigma_L, sigma_polymer=sigma_L, 
+                                     sigma_R=sigma_R, N=NmonoLong, a=amono, K0=K0, verbose=verbose )
+        out1 = float(h/(1/nm))
+        out2 = float(W_total)
+        f.write( f'{out1/Ree:5.3e} {out2:5.3e} \n' )
