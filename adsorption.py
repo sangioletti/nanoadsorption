@@ -29,14 +29,12 @@ class MultivalentBinding:
         self.A_cell = A_cell
         self.NP_conc = NP_conc
         self.cell_conc = cell_conc
-        print( 'Few problems:' )
-        print( f'1) The values of R_max_3p4K and R_ee_2K are taken at different grafting distances' )
-        print( f'This problem might be solvable using a Komura-Safran model for the bimodal brush' )
-        print( f"""2) Brush repulsion only counted for long brush in Gaussian state but could be improved
-               - and you know how using KS-blob model. However, this should not really matter IF short brush is
-              very hard? Check""" )
-        print( f'3) Initial value used for Veff was not correctly calculated by Lennart' )
-        print( f'4) Bond energy using Flory model + Gaussian approx around a different average might be possible' )
+        #print( f'1) The values of R_max_3p4K and R_ee_2K are taken at different grafting distances' )
+        #print( f'This problem might be solvable using a Komura-Safran model for the bimodal brush' )
+        #print( f"""2) Brush repulsion only counted for long brush in Gaussian state but could be improved
+        #       - and you know how using KS-blob model. However, this should not really matter IF short brush is
+        #      very hard? Check""" )
+        #print( f'3) Bond energy using Flory model + Gaussian approx around a different average value gives quadratic theory again, nice!' )
 
     def K_LR(self, h, N, a, K_bind_0):
         """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs,
@@ -54,7 +52,7 @@ class MultivalentBinding:
             #erf_den = erf(np.sqrt(3 * h**2/(2 * N * a**2)))
             
             prefactor = K_bind_0 * np.sqrt( 12.0 / ( np.pi * r_ee2)) 
-            exp_term = np.exp(-3.0 * h / (4 * r_ee2))
+            exp_term = np.exp(-3.0 * h**2 / (4 * r_ee2))
             erf_num = erf(np.sqrt(3 * h**2/(4 * r_ee2)))
             erf_den = erf(np.sqrt(3 * h**2/(2 * r_ee2)))
 
@@ -295,6 +293,7 @@ class MultivalentBinding:
             W2 = sigma_R * (mp.log(p_R) + 0.5*(1 - p_R))
 
         res = ( W1 + W2 ) * self.kT
+        #print( f'h/Ree {h/np.sqrt(N)*a} R_ee {np.sqrt(N)* a}, Bond energy density: {res}' )
         if verbose:
             print( f'Bond energy density: {res}' )
 
@@ -315,6 +314,7 @@ class MultivalentBinding:
             res = np.inf
         else:
             res = -self.kT * sigma_polymer * mp.log(mp.erf( mp.sqrt( 3 * h**2 / (2 * N * a**2))))
+            #print( f'h/Ree {h/np.sqrt(N)*a} R_ee {np.sqrt(N)* a}, Repulsive energy density: {res}' )
         if verbose:
             print( f'Steric repulsion: {res}' )
         return res
@@ -441,7 +441,11 @@ class MultivalentBinding:
             F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
             print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
             print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
-            assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
+            try:
+                assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
+            except:
+                K_bind = np.inf
+                return K_bind
         
             # Binding constant using saddle point approximation
             Area = mp.pi * self.N_long * self.a_mono**2  # Approximate area spanned by ligand
