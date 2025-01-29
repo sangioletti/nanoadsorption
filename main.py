@@ -41,7 +41,7 @@ NmonoLong = Nmonomers( 3400 * g ) # Number of monomers in PEG3400 chain
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in PEG3400 chain
 amono = 0.34 * nm # Monomer size in PEG chain
 PEG_max_extension = NmonoLong * amono # Max extension of the PEG chain
-KD = 0.10 * nM # Dissociation constant in solution between ligand-receptor
+KD = 1.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 R_NP = 35 * nm # Nanoparticle radius in units of length
 v_bind = np.pi * R_NP**2 * PEG_max_extension # Volume of binding site 
@@ -66,25 +66,7 @@ verbose = False
 n_sampling_points = 50 #Number of sampling points for the receptor surface density
 
 # Create the system
-system_exact = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort,
-                            a_mono = amono, 
-                            binding_model = "exact", 
-                            polymer_model = "gaussian",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc, 
-                            )
-system_exact_Flory = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort,
-                            a_mono = amono, 
-                            binding_model = "exact", 
-                            polymer_model = "Flory",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc, 
-                            )
-system_saddle = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
+system = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
                             N_short = NmonoShort, 
                             a_mono = amono, 
                             binding_model = "saddle", 
@@ -93,42 +75,6 @@ system_saddle = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong ,
                             NP_conc = NP_conc, 
                             cell_conc = cell_conc, )
  
-system_fixed_geo_correct = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort, 
-                            a_mono = amono, 
-                            binding_model = "fixed_geo_correct", 
-                            polymer_model = "gaussian",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc, )
-system_fixed_geo_average = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort, 
-                            a_mono = amono, 
-                            binding_model = "fixed_geo_average", 
-                            polymer_model = "gaussian",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc,) 
-system_fixed_geo_lennart = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort, 
-                            a_mono = amono, 
-                            binding_model = "fixed_geo_lennart", 
-                            polymer_model = "brush",
-                            #polymer_model = "flory",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc, 
-                            )
-system_fixed_geo_lennart_gaussian = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort, 
-                            a_mono = amono, 
-                            binding_model = "fixed_geo_shaw", 
-                            polymer_model = "gaussian",
-                            A_cell = A_cell, 
-                            NP_conc = NP_conc, 
-                            cell_conc = cell_conc, 
-                            )
-
 # Store everything in a file, so we can plot it later
 with open( 'adsorption.dat', 'w+' ) as f:
     min_exp = np.log10( sigma_R_min )
@@ -139,104 +85,22 @@ with open( 'adsorption.dat', 'w+' ) as f:
     print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
     f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
     for sigma_R in np.logspace( min_exp, max_exp, n_sampling_points ):
-        K_bind = system_exact.calculate_binding_constant( sigma_L = sigma_L, 
-                                                    sigma_polymer = sigma_L, 
-                                                    sigma_R=sigma_R, 
-                                                    K_bind_0=K_bind_0, 
-                                                    verbose=verbose 
-                                                    )
-        print( "##################")
-        print( "##################")
-        K_bind_Flory = system_exact_Flory.calculate_binding_constant( sigma_L = sigma_L, 
-                                                    sigma_polymer = sigma_L, 
-                                                    sigma_R=sigma_R, 
-                                                    K_bind_0=K_bind_0, 
-                                                    verbose=verbose 
-                                                    )
-        print( "##################")
-        print( "##################")
-        K_bind_saddle = system_saddle.calculate_binding_constant( 
+        K_bind = system.calculate_binding_constant( 
                                                           sigma_L = sigma_L, 
                                                           sigma_polymer = sigma_L, 
                                                           sigma_R = sigma_R, 
                                                           K_bind_0 = K_bind_0, 
                                                           verbose = verbose)
         
-        print( "##################")
-        print( "##################")
-        K_bind_fixed_geo_correct = system_fixed_geo_correct.calculate_binding_constant( 
-                                                          sigma_L = sigma_L, 
-                                                          sigma_polymer = sigma_L, 
-                                                          sigma_R = sigma_R, 
-                                                          K_bind_0 = K_bind_0, 
-                                                          verbose = verbose)
-        print( "##################")
-        print( "##################")
-        K_bind_fixed_geo_average = system_fixed_geo_average.calculate_binding_constant( 
-                                                          sigma_L = sigma_L, 
-                                                          sigma_polymer = sigma_L, 
-                                                          sigma_R = sigma_R, 
-                                                          K_bind_0 = K_bind_0, 
-                                                          verbose = verbose)
-        
-        print( "##################")
-        print( "##################")
-        K_bind_fixed_geo_lennart = system_fixed_geo_lennart.calculate_binding_constant( 
-                                                          sigma_L = sigma_L, 
-                                                          sigma_polymer = sigma_L, 
-                                                          sigma_R = sigma_R, 
-                                                          K_bind_0 = K_bind_0, 
-                                                          verbose = verbose)
-        print( "##################")
-        print( "##################")
-        K_bind_fixed_geo_lennart_gaussian = system_fixed_geo_lennart_gaussian.calculate_binding_constant( 
-                                                          sigma_L = sigma_L, 
-                                                          sigma_polymer = sigma_L, 
-                                                          sigma_R = sigma_R, 
-                                                          K_bind_0 = K_bind_0, 
-                                                          verbose = verbose)
-        print( "------------------" )
-        print( "------------------" )
-        print( f'Effective dissociation constant, exact + ideal polymer (M): {float((1.0 / K_bind) / M):5.3e}' )
-        print( f'Effective dissociation constant, exact + Flory polymer (M): {float((1.0 / K_bind_Flory) / M):5.3e}' )
-        print( f'Effective dissociation constant, saddle approx + ideal polymer (M): {float((1.0 / K_bind_saddle.real) / M):5.3e}' )
-        print( f'Effective dissociation constant fixed geometry, correct chi (M): {float((1.0 / K_bind_fixed_geo_correct) / M):5.3e}' )
-        print( f'Effective dissociation constant fixed geometry, average bond length (M): {float((1.0 / K_bind_fixed_geo_average) / M):5.3e}' )
-        print( f'Effective dissociation constant fixed geometry, Lennart (Shaw+brush ) (M): {float((1.0 / K_bind_fixed_geo_lennart) / M):5.3e}' )
-        print( f'Effective dissociation constant fixed geometry, Ideal polymer (Shaw+ideal ) (M): {float((1.0 / K_bind_fixed_geo_lennart_gaussian) / M):5.3e}' )
+        print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
         # Now we can calculate the adsorbed fraction
-        adsorbed_fraction = system_exact.calculate_bound_fraction( K_bind=K_bind )
-        adsorbed_fraction_Flory = system_exact_Flory.calculate_bound_fraction( K_bind=K_bind_Flory )
-        adsorbed_fraction_saddle = system_saddle.calculate_bound_fraction( K_bind=K_bind_saddle )
-        adsorbed_fraction_fixed_geo_correct = system_fixed_geo_correct.calculate_bound_fraction( K_bind = K_bind_fixed_geo_correct )
-        adsorbed_fraction_fixed_geo_average = system_fixed_geo_average.calculate_bound_fraction( K_bind = K_bind_fixed_geo_average )
-        adsorbed_fraction_fixed_geo_lennart = system_fixed_geo_lennart.calculate_bound_fraction( K_bind = K_bind_fixed_geo_lennart )
-        adsorbed_fraction_fixed_geo_lennart_gaussian = system_fixed_geo_lennart_gaussian.calculate_bound_fraction( K_bind = K_bind_fixed_geo_lennart_gaussian )
+        adsorbed_fraction = system.calculate_bound_fraction( K_bind=K_bind )
         # Print the adsorbed fraction
         out1 = float(sigma_R/(1/um2))
         out2 = float((1 / K_bind) / M)
         out3 = float(adsorbed_fraction)
-        out4 = float((1 / K_bind_Flory) / M)
-        out5 = float(adsorbed_fraction_Flory)
-        out6 = float((1 / K_bind_saddle) / M)
-        out7 = float(adsorbed_fraction_saddle)
-        out8 = float((1 / K_bind_fixed_geo_correct) / M)
-        out9 = float(adsorbed_fraction_fixed_geo_correct)
-        out10 = float((1 / K_bind_fixed_geo_average) / M)
-        out11 = float(adsorbed_fraction_fixed_geo_average)
-        out12 = float((1 / K_bind_fixed_geo_lennart) / M)
-        out13 = float(adsorbed_fraction_fixed_geo_lennart)
-        out14 = float((1 / K_bind_fixed_geo_lennart_gaussian) / M)
-        out15 = float(adsorbed_fraction_fixed_geo_lennart_gaussian)
-        f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e} {out5:5.3e}  {out6:5.3e} {out7:5.3e} {out8:5.3e} {out9:5.3e}  {out10:5.3e} {out11:5.3e}  {out12:5.3e} {out13:5.3e} {out14:5.3e} {out15:5.3e}   \n""" )
-        print( f'Adsorbed fraction, exact, ideal polymer: {out3:5.3e}' )
-        print( f'Adsorbed fraction, exact, Flory polymer: {out5:5.3e}' )
-        print( f'Adsorbed fraction, saddle, ideal polymer: {out7:5.3e}' )
-        print( f'Adsorbed fraction, fixed geometry, correct bond penalty: {out9:5.3e}' )
-        print( f'Adsorbed fraction, fixed geometry, using average bond length: {out11:5.3e}' )
-        print( f'Adsorbed fraction, fixed geometry, using Xu&Shaw model (brush): {out13:5.3e}' )
-        print( f'Adsorbed fraction, fixed geometry, using Xu&Shaw model (ideal): {out15:5.3e}' )
-        print( "------------------" )
+        f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e}\n""")
+        print( f'Adsorbed fraction, ideal polymer: {out3:5.3e}' )
         print( "------------------" )
 
 # Now we can plot the results
@@ -246,58 +110,10 @@ import numpy as np
 data = np.loadtxt( 'adsorption.dat', skiprows=2 )
 plt.xscale( 'log' )
 plt.yscale( 'linear' )
-plt.plot( data[:,0], data[:,2], label='Exact, ideal', linestyle='solid' )
-plt.plot( data[:,0], data[:,4], label='Exact, Flory', linestyle='solid' )
-plt.plot( data[:,0], data[:,6], label='Saddle approx, ideal', linestyle='solid' )
-plt.plot( data[:,0], data[:,8], label='Fixed geometry, mine', linestyle='--' ) 
-plt.plot( data[:,0], data[:,10], label='Fixed geometry, mine, average bond', linestyle='--' )
-plt.plot( data[:,0], data[:,12], label='Fixed geometry, Xu&Shaw, brush (Lennart)', linestyle='--' )
-plt.plot( data[:,0], data[:,14], label='Fixed geometry, Xu&Shaw, gaussian', linestyle='--' )
+plt.plot( data[:,0], data[:,2], linestyle='solid' )
 plt.xlabel( 'Receptor surface density $(\mu$m$^{-2}$)' )
 plt.ylabel( 'Adsorbed fraction' )
 plt.legend()
 plt.savefig( 'adsorption.png' )
 plt.close()
 
-# Calculate the value of W_total for a range of h and the maximum density of ligands and receptors
-with open( 'W_total1.dat', 'w+' ) as f:
-    sigma_R = sigma_R_max
-    Ree = np.sqrt( NmonoLong ) * amono
-    max_extension = 10 * Ree
-    for h in np.linspace( 0.0, max_extension, 50 ):
-        W_total = system_exact.W_total( h=h, sigma_L=sigma_L, sigma_polymer=sigma_L, 
-                                     sigma_R=sigma_R, N=NmonoLong, a=amono, K_bind_0=K_bind_0, verbose=verbose )
-        out1 = float(h/(1/nm))
-        out2 = float(W_total)
-        f.write( f'{out1/Ree:5.3e} {out2:5.3e} \n' )
-with open( 'W_total2.dat', 'w+' ) as f:
-    sigma_R = sigma_R_max
-    Ree = np.sqrt( NmonoLong ) * amono
-    for h in np.linspace( 0.0, max_extension, 50 ):
-        W_total = system_exact.W_total( h=h, sigma_L=sigma_L, sigma_polymer=sigma_L, 
-                                     sigma_R=sigma_R, N=NmonoLong, a=amono, K_bind_0=K_bind_0*10, verbose=verbose )
-        out1 = float(h/(1/nm))
-        out2 = float(W_total)
-        f.write( f'{out1/Ree:5.3e} {out2:5.3e} \n' )
-with open( 'W_total3.dat', 'w+' ) as f:
-    sigma_R = sigma_R_max
-    Ree = np.sqrt( NmonoLong ) * amono
-    for h in np.linspace( 0.0, max_extension, 50 ):
-        W_total = system_exact.W_total( h=h, sigma_L=sigma_L, sigma_polymer=sigma_L, 
-                                     sigma_R=sigma_R/10, N=NmonoLong, a=amono, K_bind_0=K_bind_0, verbose=verbose )
-        out1 = float(h/(1/nm))
-        out2 = float(W_total)
-        f.write( f'{out1/Ree:5.3e} {out2:5.3e} \n' )
-
-dataB1 = np.loadtxt( 'W_total1.dat', skiprows=0 )
-dataB2 = np.loadtxt( 'W_total2.dat', skiprows=0 )
-dataB3 = np.loadtxt( 'W_total3.dat', skiprows=0 )
-plt.xscale( 'linear' )
-plt.yscale( 'linear' )
-plt.plot( dataB1[:,0], dataB1[:,1], label='K_D, $\sigma_R$', linestyle='solid' )
-plt.plot( dataB2[:,0], dataB2[:,1], label='K_D/10, $\sigma_R$', linestyle='solid' )
-plt.plot( dataB3[:,0], dataB3[:,1], label='K_0, $\sigma_R / 10$', linestyle='solid' )
-plt.xlabel( 'h (nm)' )
-plt.ylabel( 'Free energy density (kbT/nm$^2$)' )
-plt.legend()
-plt.savefig( 'W_vs_h.png' )

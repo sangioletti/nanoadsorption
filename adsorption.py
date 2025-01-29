@@ -76,23 +76,6 @@ class MultivalentBinding:
             raise ValueError( f'Polymer model {self.polymer_model} not recognized' )
         return R_ee
     
-    def r_ave_bond(self, z_dist, max_bond_length = None ):
-        """Calculate the average bond length between a ligand and a receptor, **assuming** all bonds
-        have equal probability, the grafting point of the ligand is at distance z_dist from the
-        receptor containing surface and that the maximum bond extension is max_bond_length.
-        Calculated as:
-        w(x) = A_norm * 2 pi x 
-        A = int_0_x_max w(x) dx --> A = 1.0 / [ pi * (max_bond_lengt**2 - z_dist**2) ]
-        x_ave = int_0,x_max w(x) x dx
-        average_bond_length = sqrt( z_dist**2 + x_ave**2 )
-        """
-        if max_bond_length is None:
-            max_bond_length = 3.0 * z_dist
-        assert max_bond_length > z_dist # Sanity check
-        x_ave = 2.0 / 3.0 * np.sqrt( max_bond_length**2 - z_dist**2 )
-        average_bond_length = np.sqrt( z_dist**2 + x_ave**2 ) 
-        return average_bond_length
-    
     def x_max_span( self, z_dist, max_bond_length = None ):
         """The radius of the maximum circle spanned by a ligand on the receptor-containing surface.
         Same assumption/geoemtry as above"""
@@ -101,54 +84,6 @@ class MultivalentBinding:
         assert max_bond_length > z_dist # Sanity check
         x_max = np.sqrt( max_bond_length**2 - z_dist**2 ) 
         return x_max 
-    
-    def geometric_parameters( self, R_NP, R_long, R_short ):
-        #Calculate the 'active area' containing RECEPTORS interacting with the NP
-        height_cone = R_NP + R_short
-        hypotenus_cone = R_NP + R_long
-        r_cone_squared = hypotenus_cone**2 - height_cone**2
-        A_R = np.pi * r_cone_squared
-
-        #The 'active area' containing ligands LIGANDS interacting with the NP
-        # Step1: calculate the cosine of the aperture angle
-        cos_alpha = ( R_NP + R_short ) / ( R_NP + R_long )
-        assert cos_alpha >= 0.0, AssertionError( f'cos_alpha: {cos_alpha} < 0.0 but should not in this geometry' )
-        sin_alpha = np.sqrt( 1.0 - cos_alpha**2 )
-        assert cos_alpha <= 1.0, AssertionError( f'cos_alpha: {cos_alpha} > 1.0' )
-        f1 = 1.0 - cos_alpha 
-        # Step2: multiply by 2*pi*R to obtain the area of the spherical patch
-        A_P = 2.0 * np.pi * R_NP**2 * f1
-
-        # Calculate effective volume where ligand-receptors reside:
-        # Veff = V_cone - V_small_cone - V_spherical_patch
-        height_cone = R_NP + R_short
-        V_cone = np.pi / 3.0 * r_cone_squared * height_cone
-        V_spherical_patch = 2.0 / 3.0 * np.pi * R_NP**3 * f1
-        V_eff = V_cone - V_spherical_patch
-
-        error_string1 = f"R_NP {R_NP}, R_long {R_long} R_short {R_short} \n"
-        error_string2 = f"V_cone {V_cone:3.5e} V_spherical_patch {V_spherical_patch:3.5e}"
-        assert V_eff > 0, AssertionError( f'Effective volume is negative: {V_eff} \n' + error_string1 + error_string2 )
-
-        return A_R, A_P, V_eff
-
-    def chi_LR(self, r_bond, N, a, K_bind_0 ):
-        """Calculate average bond strength between ligand-receptor pairs.
-        Similar but not the same to K_LR method above, as this is what matter for discrete 'binders'
-        (ligands or receptors)"""
-        if self.binding_model in ( "fixed_geo_correct", "fixed_geo_average" ):
-            r_ee = self.r_ee( N, a )
-            if self.polymer_model in [ "gaussian", "Flory" ]:
-                chi_conf = mp.mpf( ( 3.0 / (2.0 * np.pi * r_ee**2))**(3.0/2.0) * np.exp(-3*r_bond**2/(2*r_ee**2)) )
-            else:
-                raise NotImplementedError( f'Bond cost for polymer model {self.polymer_model} not implemented' )  
-        if self.binding_model == "shaw":
-            R_NP = self.R_NP
-            R_long = self.R_max_3p4K
-            R_short = self.R_ee_2K
-            _, _, V_eff = self.geometric_parameters( R_NP = R_NP, R_long = R_long , R_short = R_short )
-            chi_conf = K_bind_0 / V_eff
-        return K_bind_0 * chi_conf
     
     def unbinding_probs( self, sigma_L, sigma_R, K_LR ):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
@@ -172,109 +107,6 @@ class MultivalentBinding:
         p_R /= (2.0*sigma_R*K_LR)
         
         return p_L, p_R
-    
-    def unbinding_probs_discrete(self, N_L, N_R, chi_LR):
-        """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
-        my_models = [ "fixed_geo_correct", "fixed_geo_average", "fixed_geo_shaw", "fixed_geo_lennart" ]
-        assert self.binding_model in my_models, AssertionError( f'Only usable with average or shaw models' )
-        N_L = mp.mpf(N_L)
-        N_R = mp.mpf(N_R)
-        check = isinstance( chi_LR, np.ndarray)
-        
-        if check:
-            chi_LR = mp.mpf(chi_LR[0])
-        else:
-            chi_LR = mp.mpf(chi_LR)
-
-        p_L = (N_L-N_R) * chi_LR - 1.0 + mp.sqrt(4.0*N_L*chi_LR + (1.0+(N_R-N_L)*chi_LR)**2)
-        p_L /= (2.0*N_L*chi_LR)
-        
-        p_R = (N_R-N_L) * chi_LR - 1.0 + mp.sqrt(4.0*N_R*chi_LR + (1.0+(N_L-N_R)*chi_LR)**2)
-        p_R /= (2.0*N_R*chi_LR)
-        
-        return p_L, p_R
-    
-    def unbinding_probs_discrete_positional( self, N_L, sigma_R, r, N, a, K_bind_0 ):
-        """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound.
-        It assume discrete ligands and a smeared out receptor density, 
-        without using any excluded volume effects but correctly accounting for the 
-        probability that bonds of different length have different probabilities. We 
-        assume a single ligand-receptor pair type.
-        """
-        assert self.binding_model == "fixed_geo_correct", AssertionError( f"Only usable with 'fixed_geo_correct' model" )
-        R_ee = z_dist = self.r_ee( N, a )
-        r_max = self.x_max_span( z_dist = z_dist, 
-                                 max_bond_length = 3.0 * R_ee )
-
-        def integrand( r, p_L ):
-            if isinstance( p_L, np.ndarray):
-                p_L = p_L[0]
-            num = 2 * np.pi * p_L * r * sigma_R * self.chi_LR( r, N, a, K_bind_0 )
-            den = 1.0 + N_L * p_L * self.chi_LR( r, N, a, K_bind_0 )
-            res = num/den
-            return res
-
-        def integral( pL ):
-            res = np.trapz( [ integrand( r, pL ) for r in np.linspace(0, 2 * r_max, 100) ], np.linspace(0, 2 * r_max, 100) )
-            return res
-
-        def fun( pL ):
-            return ( pL + integral( pL ) - 1.0 )**2
-        
-        initial_guess = 0.5
-        bounds = [(0.0, 1.0)]
-        res = minimize( fun, initial_guess, bounds=bounds)
-        p_L = res.x[0]
-        
-        p_R = 1.0 / ( 1.0 + N_L * p_L * self.chi_LR( r, N, a, K_bind_0 ) )
-        
-        return p_L, p_R
-    
-    def A_bond_discrete(self, N_L, N_R, chi_LR, verbose = False):
-        p_L, p_R = self.unbinding_probs_discrete( N_L, N_R, chi_LR )
-        if p_L == 0:
-            return np.inf
-        else:
-            bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
-
-        if p_R == 0:
-            return np.inf
-        else:
-            bond_energy_R = N_R * (mp.log(p_R) + 0.5*(1 - p_R))
-        if verbose:
-            print( f'Bond energy: {bond_energy_L + bond_energy_R}' )
-
-        return bond_energy_L + bond_energy_R
-        
-    def A_bond_positional( self, N_L, sigma_R, N, a, K_bind_0, verbose = False):
-        # Note that this first part is only needed to calculate p_L and the value
-        # assumed for r is irrelevant, we could have used any value, here we use
-        # r = 1.0
-        p_L, p_R = self.unbinding_probs_discrete_positional( N_L, sigma_R, 1.0, N, a, K_bind_0 )
-        if p_L == 0:
-            return np.inf
-        else:
-            bond_energy_L = N_L * ( mp.log(p_L) + 0.5*(1 - p_L))
-
-        if p_R == 0:
-            return np.inf
-        else:
-            r_max = self.x_max_span( z_dist = self.r_ee( N = self.N_long , a = self.a_mono ), 
-                                    max_bond_length = 3.0 * self.r_ee( N = self.N_long, a = self.a_mono ) )
-            def fun( r, pL ):
-                den = 1.0 + N_L * pL * self.chi_LR( r, N, a, K_bind_0 )
-                p_R = 1.0 / den  
-                return 2.0 * mp.pi * r * sigma_R * ( mp.log( p_R ) + 0.5 * (1.0 - p_R ) )
-            
-            bond_energy_R = quad(fun, 0.0, r_max, args=(p_L) )[ 0 ]
-            p_R_min = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( 0, N, a, K_bind_0 )) )
-            p_R_max = float( 1.0 / (1.0 + N_L * p_L * self.chi_LR( r_max, N, a, K_bind_0 )) )
-
-        if verbose:
-            print( f'Bond energy: {bond_energy_L + bond_energy_R}' )
-
-        return bond_energy_L + bond_energy_R
-    
     
     def W_bond(self, h, sigma_L, sigma_R, N, a, K_bind_0, verbose = False ):
         """Calculate bonding contribution to free energy per unit area"""
@@ -334,71 +166,7 @@ class MultivalentBinding:
                                    verbose = False):
         R_NP = self.R_NP
 
-        if self.binding_model in ( "fixed_geo_shaw", "fixed_geo_lennart" ):
-        #"""Calculate binding constant using results from Shaw's paper"""
-            if self.binding_model == "fixed_geo_lennart":
-                r_max_3p4K = r_ee_long = self.R_max_3p4K 
-                r_ee_2K = self.R_ee_2K
-                v_bind = r_max_3p4K**3
-            elif self.binding_model == "fixed_geo_shaw":
-                r_ee_long = self.r_ee( N = self.N_long, a = self.a_mono )
-                v_bind = r_ee_long**3
-
-            A_R, A_P, V_eff = self.geometric_parameters( R_NP = R_NP, 
-                                                    R_long = 3.0 * r_ee_long,
-                                                    R_short = r_ee_long,
-							)
-            N_L = sigma_L * A_P
-            N_R = sigma_R * A_R
-
-            chi_LR = K_bind_0 / V_eff # 1 / V_eff is an effective density. The lower the harder to bond
-            #print( f"shaw, chi_LR: {chi_LR}" )
-            K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L, N_R, chi_LR, verbose = verbose ) )
-
-            if verbose:
-                print( f"K bind: {K_bind}" )
-
-            return K_bind
-        
-        elif self.binding_model in ( "fixed_geo_correct", "fixed_geo_average" ):
-            """Calculate binding constant using my initial approximation, as previously done"""
-            r_ee_long = self.r_ee( N = self.N_long, a = self.a_mono )
-            r_ave_bond = self.r_ave_bond( z_dist = r_ee_long, max_bond_length = 3.0 * r_ee_long ) 
-            v_bind = r_ee_long**3
-
-            _, A_P, _ = self.geometric_parameters( R_NP = R_NP, 
-                                                    R_long = 3 * r_ee_long, 
-                                                    R_short = r_ee_long )
-            
-            N_L = sigma_L * A_P
-
-            x_max = self.x_max_span( z_dist = r_ee_long, max_bond_length = 3.0 * r_ee_long )
-            A_R = np.pi * x_max**2 # Approximate area spanned by a ligand, calculated assuming max length is 3 times average
-                                  # R_ee o the polymer holding the ligand
-            N_R = sigma_R * A_R
-
-            print( f'Active number of ligands and receptors in binding zone: N_L: {N_L}, N_R: {N_R}' )
-
-            v_bind = r_ee_long**3
-            if self.binding_model == "fixed_geo_average":
-                chi_LR = self.chi_LR( r_bond = r_ave_bond, 
-                                     N = self.N_long,
-                                     a = self.a_mono,
-                                     K_bind_0 = K_bind_0 )
-                K_bind = v_bind * mp.exp( -self.A_bond_discrete( N_L = N_L, 
-                                                                N_R = N_R, 
-                                                                chi_LR = chi_LR, 
-                                                                verbose = verbose ) )
-            elif self.binding_model == "fixed_geo_correct":
-                K_bind = v_bind * mp.exp( -self.A_bond_positional( N_L = N_L, 
-                                                                  sigma_R = sigma_R, 
-                                                                  N = self.N_long, 
-                                                                  a = self.a_mono, 
-                                                                  K_bind_0 = K_bind_0, 
-                                                                  verbose = verbose ) )
-            return K_bind
-    
-        elif self.binding_model == "saddle":
+        if self.binding_model == "saddle":
             z_max = self.N_long * self.a_mono
             #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
             def force(h):
