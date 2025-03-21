@@ -13,6 +13,13 @@ assert precision>=30, AssertionError( "You need high precision to avoid numerica
 verbose = False
 n_sampling_points = 50 #Number of sampling points for the receptor surface density
 
+# These two parameters simply control the maximum and minimum receptor surface density
+# for which calculations are made
+sigma_R_min = 1.0 / um2 # Minimum receptor surface density.
+                        # Corresponds to average distance between receptors is 1 um
+sigma_R_max = 1e4 / um2 # Maximum receptor surface density
+                        # Corresponds to average distance between receptors is 10 nm
+
 # Create the system
 system = MultivalentBinding( kT=kT, R_NP = R_NP, 
                             data_polymers=data_polymers, 
