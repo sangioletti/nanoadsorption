@@ -20,7 +20,9 @@ VTzone=0.5*0.084 * mL # Volume of spleen Tzone in animal [mL] (Assuming 50% of m
 NP_conc=Npdosing*Vdosing*fTzone/VTzone # Number of particles per mL in Tzone of mouse spleen [mL-1]
 
 
+######################################################
 # Here we define the DESIGN OF MULTIVALENT NANOPARTICLE
+######################################################
 
 R_NP = 35 * nm # Nanoparticle radius in units of length
 N_ligands = 150 # Number of ligands on the nanoparticle
@@ -34,10 +36,8 @@ NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in th short, inert PEG c
 PEG2K_ee = np.sqrt( NmonoShort ) * amono # end-to-end distance of the short PEG chain
 PEG_ligands_ee = np.sqrt( NmonoLigands ) * amono # end-to-end extension of the PEG to which ligands are attached
 PEG_ligands_max_extension = NmonoLigands * amono # Max extension of the PEG to which ligands are attached
-
 # Calculate the binding volume. This is based on Lennart's Lindfors formula. A different approximation
-# could be:
-# v_bind = np.pi * R_NP**2 * PEG_ligands_max_extension
+# could be: v_bind = np.pi * R_NP**2 * PEG_ligands_max_extension
 A1 = np.pi / 3.0 
 A2 = (( R_NP + PEG_ligands_max_extension) ** 2 - ( R_NP + PEG2K_ee) ** 2 ) * ( R_NP + PEG2K_ee ) 
 A3 = - 2.0 * R_NP ** 3 * ( 1.0 - (R_NP + PEG2K_ee) / (R_NP + PEG_ligands_max_extension))

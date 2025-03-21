@@ -34,17 +34,17 @@ with open( 'adsorption.dat', 'w+' ) as f:
     min_exp = np.log10( sigma_R_min )
     max_exp = np.log10( sigma_R_max )
     M_conc = (A_cell/(np.pi * R_NP**2)) * cell_conc # Concentration of binding sites for NPs
-    print( f'NP concentration {NP_conc/(1/mL):5.3e} (1/mL)' )
-    print( f'Binding sites concentration {M_conc/(1/mL):5.3e} (1/mL)' )
-    print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
-    f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
+    #print( f'NP concentration {NP_conc/(1/mL):5.3e} (1/mL)' )
+    #print( f'Binding sites concentration {M_conc/(1/mL):5.3e} (1/mL)' )
+    #print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
+    #f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
     for sigma_R in np.logspace( min_exp, max_exp, n_sampling_points ):
         K_bind = system.calculate_binding_constant( 
                                                           K_bind_0=K_bind_0, 
                                                           sigma_R = sigma_R, 
                                                           verbose = verbose)
         
-        print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
+        #print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
         # Now we can calculate the adsorbed fraction
         adsorbed_fraction = system.calculate_bound_fraction( K_bind=K_bind )
         # Print the adsorbed fraction
@@ -52,8 +52,8 @@ with open( 'adsorption.dat', 'w+' ) as f:
         out2 = float((1 / K_bind) / M)
         out3 = float(adsorbed_fraction)
         f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e}\n""")
-        print( f'Adsorbed fraction, ideal polymer: {out3:5.3e}' )
-        print( "------------------" )
+        #print( f'Adsorbed fraction, ideal polymer: {out3:5.3e}' )
+        #print( "------------------" )
 
 # Now we can plot the results
 import matplotlib.pyplot as plt

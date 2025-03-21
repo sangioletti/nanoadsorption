@@ -207,8 +207,8 @@ class MultivalentBinding:
             # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
             dh = 1e-8  # Small step for numerical derivative
             F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
-            print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
-            print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
+            #print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
+            #print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
             try:
                 assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
             except:
