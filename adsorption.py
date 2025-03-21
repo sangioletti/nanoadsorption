@@ -4,6 +4,11 @@ from scipy.optimize import fsolve, minimize
 from scipy.integrate import quad    
 from mpmath import mp
 
+# This function simply helps calculating the number of monomers in a PEG chain of a given molecular weight
+def Nmonomers( MW ):
+    '''Calculate the number of monomers in a PEG chain of a given molecular weight'''
+    return int( MW - 18 ) / 44.0
+
 class MultivalentBinding:
     def __init__(self, kT, R_NP, data_polymers,
                  A_cell, NP_conc, cell_conc, 
