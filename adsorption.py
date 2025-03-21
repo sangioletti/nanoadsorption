@@ -5,36 +5,26 @@ from scipy.integrate import quad
 from mpmath import mp
 
 class MultivalentBinding:
-    def __init__(self, kT, R_NP, N_long, N_short, a_mono, 
+    def __init__(self, kT, R_NP, data_polymers,
                  A_cell, NP_conc, cell_conc, 
                  binding_model = None, 
                  polymer_model = "gaussian"):
+        self.data_polymers = data_polymers
         self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
         self.nm2 = ( self.nm )**2 # Sets the units of area
         self.nm3 = ( self.nm )**3 # Sets the units of volume
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
         self.R_NP = R_NP 
-        self.N_long = N_long    
-        self.N_short = N_short
-        self.a_mono = a_mono
         # These are the values used by Lennart and taken from paper.
         # They are evaluated for polymers in the mushroom (2K) and brush (3.4K) regime
         # However, I notice they are taken at inconsistent values of the grafting distance
         # since the 3.4K is smaller which I am not sure is really correct.
-        self.R_max_3p4K = 11.1 * self.nm
-        self.R_ee_2K = 3.9 * self.nm #Initial calculations by Lennart used 4.0 but difference is irrelevant
         self.polymer_model = polymer_model 
         self.binding_model = binding_model
         self.A_cell = A_cell
         self.NP_conc = NP_conc
         self.cell_conc = cell_conc
-        #print( f'1) The values of R_max_3p4K and R_ee_2K are taken at different grafting distances' )
-        #print( f'This problem might be solvable using a Komura-Safran model for the bimodal brush' )
-        #print( f"""2) Brush repulsion only counted for long brush in Gaussian state but could be improved
-        #       - and you know how using KS-blob model. However, this should not really matter IF short brush is
-        #      very hard? Check""" )
-        #print( f'3) Bond energy using Flory model + Gaussian approx around a different average value gives quadratic theory again, nice!' )
 
     def K_LR(self, h, N, a, K_bind_0):
         """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs,
@@ -65,25 +55,14 @@ class MultivalentBinding:
         
     def r_ee( self, N, a ):
         """Calculate the average end-to-end distance in a polymer"""
-        if self.polymer_model in ( "gaussian", "ideal" ):
+        if self.polymer_model in ( "gaussian" ):
             R_ee = np.sqrt( N ) * a
-        elif self.polymer_model in ( "self_avoiding_walk", "Flory" ):
+        elif self.polymer_model in ( "self_avoiding" ):
             nu = 3.0/5.0
             R_ee = N**(nu) * a
-        elif self.polymer_model in ( "Alexander-DeGennes", "brush" ):
-            R_ee = self.R_ee_2K
         else:
             raise ValueError( f'Polymer model {self.polymer_model} not recognized' )
         return R_ee
-    
-    def x_max_span( self, z_dist, max_bond_length = None ):
-        """The radius of the maximum circle spanned by a ligand on the receptor-containing surface.
-        Same assumption/geoemtry as above"""
-        if max_bond_length is None:
-            max_bond_length = 3.0 * z_dist
-        assert max_bond_length > z_dist # Sanity check
-        x_max = np.sqrt( max_bond_length**2 - z_dist**2 ) 
-        return x_max 
     
     def unbinding_probs( self, sigma_L, sigma_R, K_LR ):
         """Solve for probabilities p_L and p_R of Ligand/Receptor being UNbound"""
@@ -108,8 +87,12 @@ class MultivalentBinding:
         
         return p_L, p_R
     
-    def W_bond(self, h, sigma_L, sigma_R, N, a, K_bind_0, verbose = False ):
+    def W_bond(self, h, sigma_R, K_bind_0, verbose = False ):
         """Calculate bonding contribution to free energy per unit area"""
+        a = self.data_polymers["ligands"]["a"]
+        N = self.data_polymers["ligands"]["N"]
+        sigma_L = self.data_polymers["ligands"]["sigma"]
+
         K = self.K_LR(h, N, a, K_bind_0)
         p_L, p_R = self.unbinding_probs(sigma_L, sigma_R, K)
 
@@ -130,8 +113,19 @@ class MultivalentBinding:
             print( f'Bond energy density: {res}' )
 
         return res
+    
+    def W_steric(self, h, verbose = False):
+        """Calculate steric repulsion free energy per unit area"""
+        # This is to avoid numerical problems
+        assert self.polymer_model in [ "gaussian", "Flory" ], AssertionError( f"Repulsion implemented only for gaussian polymer")
+        check = isinstance( h, np.ndarray)
 
-    def W_steric(self, h, sigma_polymer, N, a, verbose = False):
+        res = 0.0
+        for polymer in self.data_polymers.values():
+            res = self.W_polymer( h, polymer, verbose = verbose )
+        return res
+    
+    def W_polymer( self, h, data, verbose = False):
         """Calculate steric repulsion free energy per unit area"""
         # This is to avoid numerical problems
         assert self.polymer_model in [ "gaussian", "Flory" ], AssertionError( f"Repulsion implemented only for gaussian polymer")
@@ -145,52 +139,53 @@ class MultivalentBinding:
         if h == 0:
             res = np.inf
         else:
-            res = -self.kT * sigma_polymer * mp.log(mp.erf( mp.sqrt( 3 * h**2 / (2 * N * a**2))))
-            #print( f'h/Ree {h/np.sqrt(N)*a} R_ee {np.sqrt(N)* a}, Repulsive energy density: {res}' )
+            name = data["name"]
+            N = data[ "N" ]
+            a = data[ "a" ]
+            sigma = data[ "sigma" ]
+            res = -self.kT * sigma * mp.log(mp.erf( mp.sqrt( 3 * h**2 / (2 * N * a**2))))
         if verbose:
-            print( f'Steric repulsion: {res}' )
+            print( f'Steric repulsion from polymer {name}: {res}' )
         return res
     
-    def W_total(self, h, sigma_L, sigma_polymer, sigma_R, N, a, K_bind_0, verbose = False):
+    def W_total(self, h, sigma_R, K_bind_0, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        Ree = self.r_ee( N, self.a_mono )
-        W_bond = self.W_bond(h, sigma_L, sigma_R, N, a, K_bind_0, verbose)
-        W_steric = self.W_steric(h, sigma_polymer, N, a, verbose)
+        N_long = self.data_polymers["ligands"]["N"]
+        a = self.data_polymers["ligands"]["a"]
+        Ree = self.r_ee( N_long, a )
+        W_bond = self.W_bond(h, sigma_R, K_bind_0, verbose)
+        W_steric = self.W_steric( h, verbose)
         if verbose:
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant(self, K_bind_0, sigma_L, sigma_R,
-                                   sigma_polymer = None,
+    def calculate_binding_constant(self, K_bind_0,
+                                   sigma_R,
                                    z_max = None, 
                                    verbose = False):
         R_NP = self.R_NP
 
         if self.binding_model == "saddle":
-            z_max = self.N_long * self.a_mono
+            N_long = self.data_polymers["ligands"]["N"]
+            a = self.data_polymers["ligands"]["a"]
+            z_max = N_long * a
             #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
             def force(h):
-                return 2 * np.pi * R_NP * self.W_total(h, sigma_L = sigma_L, 
-                                                       sigma_polymer = sigma_polymer, 
+                return 2 * np.pi * R_NP * self.W_total(h, 
                                                        sigma_R = sigma_R, 
-                                                       N = self.N_long, 
-                                                       a = self.a_mono, 
                                                        K_bind_0 = K_bind_0, 
                                                        verbose = verbose 
                                                        )
         
             # Find equilibrium binding distance where W_total = 0
             def find_z_bind(h):
-                return self.W_total(h, sigma_L = sigma_L, 
-                                    sigma_polymer = sigma_polymer, 
+                return self.W_total(h, 
                                     sigma_R = sigma_R, 
-                                    N = self.N_long, 
-                                    a = self.a_mono, 
                                     K_bind_0 = K_bind_0, 
                                     verbose = verbose 
                                     )
 
-            R_ee = self.r_ee( N = self.N_long, a = self.a_mono ) 
+            R_ee = self.r_ee( N_long, a ) 
 
             initial_guess = R_ee
             bounds = [(0.0, z_max)]
@@ -216,7 +211,7 @@ class MultivalentBinding:
                 return K_bind
         
             # Binding constant using saddle point approximation
-            Area = mp.pi * self.N_long * self.a_mono**2  # Approximate area spanned by ligand
+            Area = mp.pi * N_long * a**2  # Approximate area spanned by ligand
             energy_min = np.trapz([force(h) for h in np.linspace(z_bind, z_max, 100)],
                                   np.linspace(z_bind, z_max, 100))
         
@@ -233,14 +228,11 @@ class MultivalentBinding:
             N = self.N_long
             a = self.a_mono
             def force(h):
-                W_total = self.W_total(h, sigma_L = sigma_L, 
-                                                       sigma_polymer = sigma_polymer, 
-                                                       sigma_R = sigma_R, 
-                                                       N = N, 
-                                                       a = a, 
-                                                       K_bind_0 = K_bind_0, 
-                                                       verbose = verbose 
-                                                       )
+                W_total = self.W_total(h, 
+                                        sigma_R = sigma_R, 
+                                        K_bind_0 = K_bind_0, 
+                                        verbose = verbose 
+                                        )
                 if verbose:
                     print( f'W_total: {W_total} (kbT/nm^2)' )
                     print( f'Force: {2 * mp.pi * R_NP * W_total} (kbT/nm)' )

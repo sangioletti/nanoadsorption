@@ -39,15 +39,23 @@ def Nmonomers( MW ):
 
 NmonoLong = Nmonomers( 3400 * g ) # Number of monomers in PEG3400 chain
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in PEG3400 chain
-amono = 0.34 * nm # Monomer size in PEG chain
-PEG_max_extension = NmonoLong * amono # Max extension of the PEG chain
+amono = 0.28 * nm # Monomer size in PEG chain
+PEG2K = np.sqrt( NmonoShort ) * amono # Extension of the short PEG chain
+PEG_max_extension = NmonoLong * amono # Max extension of the long PEG to which ligands are attached
 KD = 1.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 R_NP = 35 * nm # Nanoparticle radius in units of length
-v_bind = np.pi * R_NP**2 * PEG_max_extension # Volume of binding site 
+A1 = np.pi / 3.0 
+A2 = (( R_NP + PEG_max_extension) ** 2 - ( R_NP + PEG2K) ** 2 ) * ( R_NP + PEG2K ) 
+A3 = - 2.0 * R_NP ** 3 * ( 1.0 - (R_NP + PEG2K) / (R_NP + PEG_max_extension))
+v_bind = A1 * ( A2 + A3 ) 
 N_ligands = 150 # Number of ligands on the nanoparticle
 sigma_L = 150.0 / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
 sigma_P2K = 1.0 / ( 2.0 * nm )**2  # Surface density of short PEG chains
+
+data_polymers = {}
+data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K" }
+data_polymers['ligands'] = {"N": NmonoLong, "a": amono, "sigma": sigma_L, "name":"ligands" }
 
 # Define system parameters - this info should be checked, for now it is just
 # a search from chatGPT
@@ -66,9 +74,8 @@ verbose = False
 n_sampling_points = 50 #Number of sampling points for the receptor surface density
 
 # Create the system
-system = MultivalentBinding( kT=kT, R_NP = R_NP, N_long = NmonoLong , 
-                            N_short = NmonoShort, 
-                            a_mono = amono, 
+system = MultivalentBinding( kT=kT, R_NP = R_NP, 
+                            data_polymers=data_polymers, 
                             binding_model = "saddle", 
                             polymer_model = "gaussian",
                             A_cell = A_cell, 
@@ -86,10 +93,8 @@ with open( 'adsorption.dat', 'w+' ) as f:
     f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
     for sigma_R in np.logspace( min_exp, max_exp, n_sampling_points ):
         K_bind = system.calculate_binding_constant( 
-                                                          sigma_L = sigma_L, 
-                                                          sigma_polymer = sigma_L, 
+                                                          K_bind_0=K_bind_0, 
                                                           sigma_R = sigma_R, 
-                                                          K_bind_0 = K_bind_0, 
                                                           verbose = verbose)
         
         print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
