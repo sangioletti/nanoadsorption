@@ -229,9 +229,11 @@ class MultivalentBinding:
         
         elif self.binding_model == "exact":
             #"""Calculate binding constant using Derjaguin approximation"""
-            z_max = self.N_long * self.a_mono
-            N = self.N_long
-            a = self.a_mono
+            N_long = self.data_polymers["ligands"]["N"]
+            a_mono = self.data_polymers["ligands"]["a"]
+            z_max = N_long * a_mono
+            N = N_long
+            a = a_mono
             def force(h):
                 W_total = self.W_total(h, 
                                         sigma_R = sigma_R, 

@@ -1,0 +1,13 @@
+use_small_heuristics = "Max"
+max_width = 100
+
+comment_width = 100
+wrap_comments = true
+normalize_comments = true
+
+where_single_line = true
+brace_style = "PreferSameLine"
+newline_style = "Unix"
+
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"

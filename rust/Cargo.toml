@@ -1,0 +1,56 @@
+[package]
+name = "nanoadsorption"
+version = "0.1.0"
+edition = "2024"
+
+[workspace.lints.rust]
+keyword_idents = { level = "warn", priority = -1 }
+
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+arc_with_non_send_sync = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_ptr_alignment = "allow"
+cast_sign_loss = "allow"
+default_trait_access = "allow"
+doc_lazy_continuation = "allow"
+expl_impl_clone_on_copy = "allow"
+explicit_deref_methods = "allow"
+float_cmp = "allow"
+ignored_unit_patterns = "allow"
+inconsistent_struct_constructor = "allow"
+manual_assert = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+needless_raw_string_hashes = "allow"
+neg_multiply = "allow"
+no_effect_underscore_binding = "allow"
+ptr_as_ptr = "allow"
+ptr_cast_constness = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+trait_duplication_in_bounds = "allow"
+transmute_ptr_to_ptr = "allow"
+unnecessary_box_returns = "allow"
+unreadable_literal = "allow"
+unused_self = "allow"
+used_underscore_binding = "allow"
+wildcard_imports = "allow"
+
+return_self_not_must_use = "allow"
+
+[dependencies]

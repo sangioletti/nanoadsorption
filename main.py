@@ -23,7 +23,7 @@ sigma_R_max = 1e4 / um2 # Maximum receptor surface density
 # Create the system
 system = MultivalentBinding( kT=kT, R_NP = R_NP, 
                             data_polymers=data_polymers, 
-                            binding_model = "saddle", 
+                            binding_model = "exact", 
                             polymer_model = "gaussian",
                             A_cell = A_cell, 
                             NP_conc = NP_conc, 
@@ -67,4 +67,14 @@ plt.xlabel( 'Receptor surface density $(\mu$m$^{-2}$)' )
 plt.ylabel( 'Adsorbed fraction' )
 plt.legend()
 plt.savefig( 'adsorption.png' )
+plt.close()
+
+data = np.loadtxt( 'adsorption_rust.dat', skiprows=2 )
+plt.xscale( 'log' )
+plt.yscale( 'linear' )
+plt.plot( data[:,0], data[:,2], linestyle='solid' )
+plt.xlabel( 'Receptor surface density $(\mu$m$^{-2}$)' )
+plt.ylabel( 'Adsorbed fraction' )
+plt.legend()
+plt.savefig( 'adsorption_rust.png' )
 plt.close()
