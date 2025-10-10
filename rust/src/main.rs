@@ -60,6 +60,7 @@ fn main() {
         params.cell_conc,
         BindingModel::Exact,
         PolymerModel::Gaussian,
+        params.verbose,
     );
 
     println!("\n==============================================");
@@ -78,15 +79,14 @@ fn main() {
 
     // Calculate binding constant
     println!("\nCalculating binding constant (this may take a moment)...");
-    let k_bind = system.calculate_binding_constant(params.k_bind_0, sigma_r, None, false);
+    let k_bind = system.calculate_binding_constant(params.k_bind_0, sigma_r, None);
     println!("Binding constant K_bind: {:.6e}", k_bind as f64);
 
     // Calculate bound fraction
-    let bound_fraction = system.calculate_bound_fraction(k_bind, false);
+    let bound_fraction = system.calculate_bound_fraction(k_bind);
     println!("Bound fraction: {:.6}", bound_fraction as f64);
 
     // Simulation parameters (matching Python main.py)
-    let verbose = false;
     let n_sampling_points = 50;
     let sigma_r_min = 1.0 / UM2; // 1 receptor per um^2
     let sigma_r_max = 1e4 / UM2; // 10,000 receptors per um^2
@@ -107,7 +107,6 @@ fn main() {
         sigma_r_min,
         sigma_r_max,
         n_sampling_points,
-        verbose,
     ) {
         Ok(()) => {
             println!("\n✓ Simulation complete!");
@@ -130,7 +129,6 @@ fn run_adsorption_simulation(
     sigma_r_min: f128,
     sigma_r_max: f128,
     n_sampling_points: usize,
-    verbose: bool,
 ) -> std::io::Result<()> {
     let mut file = File::create("adsorption_rust.dat")?;
 
@@ -148,12 +146,12 @@ fn run_adsorption_simulation(
 
     for sigma_r in sigma_r_values[0..iterations].iter() {
         // Calculate binding constant
-        let k_bind = system.calculate_binding_constant(k_bind_0, *sigma_r, None, verbose);
+        let k_bind = system.calculate_binding_constant(k_bind_0, *sigma_r, None);
 
         process_value(k_bind, "k_bind");
 
         // Calculate adsorbed fraction
-        let adsorbed_fraction = system.calculate_bound_fraction(k_bind, verbose);
+        let adsorbed_fraction = system.calculate_bound_fraction(k_bind);
 
         // process_value(adsorbed_fraction, "adsorbed_fraction");
 

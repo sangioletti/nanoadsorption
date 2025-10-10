@@ -83,6 +83,8 @@ pub struct SystemParameters {
 
     // Polymer data
     pub data_polymers: PolymersData,
+
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +169,7 @@ impl Default for SystemParameters {
             kd,
             k_bind_0,
             data_polymers,
+            verbose: false,
         }
     }
 }

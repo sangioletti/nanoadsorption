@@ -56,6 +56,9 @@ pub struct MultiValentBinding {
 
     /// Cell concentration
     pub cell_conc: f128,
+
+    // Whether to print log output.
+    pub verbose: bool,
 }
 
 impl MultiValentBinding {
@@ -70,6 +73,7 @@ impl MultiValentBinding {
         cell_conc: f128,
         binding_model: BindingModel,
         polymer_model: PolymerModel,
+        verbose: bool,
     ) -> Self {
         let nm = 1.0;
         let nm2 = nm * nm;
@@ -89,6 +93,7 @@ impl MultiValentBinding {
             a_cell,
             np_conc,
             cell_conc,
+            verbose,
         }
     }
 
@@ -142,30 +147,20 @@ impl MultiValentBinding {
     }
 
     /// Calculate steric repulsion free energy per unit area for a specific polymer
-    pub fn w_polymer(&self, h: f128, data: &PolymerData, verbose: bool) -> f128 {
-        assert!(
-            self.polymer_model == PolymerModel::Gaussian
-                || self.polymer_model == PolymerModel::Flory,
-            "Repulsion implemented only for gaussian/Flory polymer"
-        );
+    pub fn w_polymer(&self, h: f128, data: &PolymerData) -> f128 {
+        let n = data.n;
+        let a = data.a;
+        let sigma = data.sigma;
+        let result = -self.kt * sigma * erf(((3.0 * h * h) / (2.0 * n * a * a)).sqrt()).ln();
 
-        if h == 0.0 {
-            f128::INFINITY
-        } else {
-            let n = data.n;
-            let a = data.a;
-            let sigma = data.sigma;
-            let result = -self.kt * sigma * erf(((3.0 * h * h) / (2.0 * n * a * a)).sqrt()).ln();
-
-            if verbose {
-                println!("Steric repulsion from polymer {}: {}", data.name, result as f64);
-            }
-            result
+        if self.verbose {
+            println!("Steric repulsion from polymer {}: {}", data.name, result as f64);
         }
+        result
     }
 
     /// Calculate bonding contribution to free energy per unit area
-    pub fn w_bond(&self, h: f128, sigma_r: f128, k_bind_0: f128, verbose: bool) -> f128 {
+    pub fn w_bond(&self, h: f128, sigma_r: f128, k_bind_0: f128) -> f128 {
         let a = self.data_polymers.ligands.a;
         let n = self.data_polymers.ligands.n;
         let sigma_l = self.data_polymers.ligands.sigma;
@@ -180,7 +175,7 @@ impl MultiValentBinding {
 
         let result = (w1 + w2) * self.kt;
 
-        if verbose {
+        if self.verbose {
             println!("Bond energy density: {}", result as f64);
         }
 
@@ -188,23 +183,21 @@ impl MultiValentBinding {
     }
 
     /// Calculate steric repulsion free energy per unit area (all polymers)
-    pub fn w_steric(&self, h: f128, verbose: bool) -> f128 {
-        let mut result = 0.0;
-        result += self.w_polymer(h, &self.data_polymers.short, verbose);
-        result += self.w_polymer(h, &self.data_polymers.ligands, verbose);
-        result
+    pub fn w_steric(&self, h: f128) -> f128 {
+        self.w_polymer(h, &self.data_polymers.short)
+            + self.w_polymer(h, &self.data_polymers.ligands)
     }
 
     /// Calculate total interaction free energy per unit area
-    pub fn w_total(&self, h: f128, sigma_r: f128, k_bind_0: f128, verbose: bool) -> f128 {
+    pub fn w_total(&self, h: f128, sigma_r: f128, k_bind_0: f128) -> f128 {
         let n_long = self.data_polymers.ligands.n;
         let a = self.data_polymers.ligands.a;
         let r_ee = self.r_ee(n_long, a);
 
-        let w_bond = self.w_bond(h, sigma_r, k_bind_0, verbose);
-        let w_steric = self.w_steric(h, verbose);
+        let w_bond = self.w_bond(h, sigma_r, k_bind_0);
+        let w_steric = self.w_steric(h);
 
-        if verbose {
+        if self.verbose {
             println!(
                 "h/Ree {:.6} W_bond: {:.6}, W_steric: {:.6}",
                 (h / r_ee) as f64,
@@ -222,35 +215,30 @@ impl MultiValentBinding {
         k_bind_0: f128,
         sigma_r: f128,
         z_max: Option<f128>,
-        verbose: bool,
     ) -> f128 {
-        let force = |h: f128| -> f128 {
-            let w_total = self.w_total(h, sigma_r, k_bind_0, verbose);
-            if verbose {
-                println!("W_total: {} (kbT/nm^2)", w_total as f64);
-                println!("Force: {} (kbT/nm)", (2.0 * PI * self.r_np * w_total) as f64);
-            }
-            2.0 * PI * self.r_np * w_total
-        };
         match self.binding_model {
             BindingModel::Saddle => {
-                self.calculate_binding_constant_saddle(k_bind_0, sigma_r, z_max, verbose, force)
+                self.calculate_binding_constant_saddle(k_bind_0, sigma_r, z_max)
             }
-            BindingModel::Exact => self.calculate_binding_constant_exact(z_max, verbose, force),
+            BindingModel::Exact => self.calculate_binding_constant_exact(k_bind_0, sigma_r, z_max),
         }
     }
 
-    fn calculate_binding_constant_saddle<F>(
+    fn force(&self, h: f128, k_bind_0: f128, sigma_r: f128) -> f128 {
+        let w_total = self.w_total(h, sigma_r, k_bind_0);
+        if self.verbose {
+            println!("W_total: {} (kbT/nm^2)", w_total as f64);
+            println!("Force: {} (kbT/nm)", (2.0 * PI * self.r_np * w_total) as f64);
+        }
+        2.0 * PI * self.r_np * w_total
+    }
+
+    fn calculate_binding_constant_saddle(
         &self,
         k_bind_0: f128,
         sigma_r: f128,
         z_max: Option<f128>,
-        verbose: bool,
-        force: F,
-    ) -> f128
-    where
-        F: Fn(f128) -> f128,
-    {
+    ) -> f128 {
         let n_long = self.data_polymers.ligands.n;
         let a = self.data_polymers.ligands.a;
 
@@ -266,7 +254,7 @@ impl MultiValentBinding {
         for i in 0..n_points {
             let h = (i as f128 / n_points as f128) * z_max;
             if h > 0.0 {
-                let w = self.w_total(h, sigma_r, k_bind_0, false);
+                let w = self.w_total(h, sigma_r, k_bind_0);
                 if w < min_w {
                     min_w = w;
                     z_bind = h;
@@ -278,7 +266,7 @@ impl MultiValentBinding {
             panic!("Equilibrium binding distance is too large");
         }
 
-        if verbose {
+        if self.verbose {
             println!("Equilibrium binding distance, normalized to Ree: {}", (z_bind / r_ee) as f64);
             println!(
                 "Equilibrium binding distance, normalized to max linear extension: {}",
@@ -288,7 +276,9 @@ impl MultiValentBinding {
 
         // Calculate second derivative at minimum (numerical)
         let dh = 1e-8;
-        let f_prime = -(force(z_bind + dh) - force(z_bind - dh)) / (2.0 * dh);
+        let f_prime = -(self.force(z_bind + dh, k_bind_0, sigma_r)
+            - self.force(z_bind - dh, k_bind_0, sigma_r))
+            / (2.0 * dh);
 
         if f_prime < 0.0 {
             return f128::INFINITY;
@@ -303,10 +293,10 @@ impl MultiValentBinding {
         let step = (z_max - z_bind) / n_steps as f128;
         for i in 0..n_steps {
             let h = z_bind + (i as f128 + 0.5) * step;
-            energy_min += force(h) * step;
+            energy_min += self.force(h, k_bind_0, sigma_r) * step;
         }
 
-        if verbose {
+        if self.verbose {
             println!("Energy minimum: {}", energy_min as f64);
             println!("Second derivative at minimum: {}", f_prime as f64);
         }
@@ -314,15 +304,12 @@ impl MultiValentBinding {
         area * (-energy_min / self.kt).exp() * (2.0 * PI / (f_prime / self.kt)).sqrt()
     }
 
-    fn calculate_binding_constant_exact<F>(
+    fn calculate_binding_constant_exact(
         &self,
+        k_bind_0: f128,
+        sigma_r: f128,
         z_max: Option<f128>,
-        verbose: bool,
-        force: F,
-    ) -> f128
-    where
-        F: Fn(f128) -> f128,
-    {
+    ) -> f128 {
         let n_long = self.data_polymers.ligands.n;
         let a = self.data_polymers.ligands.a;
 
@@ -336,9 +323,9 @@ impl MultiValentBinding {
             for i in 0..n_steps {
                 let x = h + (i as f128 + 0.5) * step;
 
-                a_h += force(x) * step;
+                a_h += self.force(x, k_bind_0, sigma_r) * step;
             }
-            if verbose {
+            if self.verbose {
                 println!("h {}, A(h) {}", h as f64, a_h as f64);
             }
             (-a_h / self.kt).exp()
@@ -358,7 +345,7 @@ impl MultiValentBinding {
     }
 
     /// Calculate fraction of bound nanoparticles
-    pub fn calculate_bound_fraction(&self, k_bind: f128, verbose: bool) -> f128 {
+    pub fn calculate_bound_fraction(&self, k_bind: f128) -> f128 {
         if k_bind == f128::INFINITY {
             return 1.0;
         }
@@ -372,7 +359,7 @@ impl MultiValentBinding {
 
         let bound_fraction = np_m_conc / self.np_conc;
 
-        if verbose {
+        if self.verbose {
             println!(
                 "term: {}, sqrt_term: {}, NP_M_conc: {}",
                 term as f64, sqrt_term as f64, np_m_conc as f64
