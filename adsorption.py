@@ -3,6 +3,21 @@ from scipy.special import erf
 from scipy.optimize import fsolve, minimize
 from scipy.integrate import quad    
 from mpmath import mp
+import math
+
+def ramanujan_log_factorial(n):
+    """Ramanujan's approximation for log(n!)"""
+    return (n * math.log(n) - n 
+            + (1/6) * math.log(8*n**3 + 4*n**2 + n + 1/30) 
+            + 0.5 * math.log(math.pi))
+
+# Compare with exact value
+n = 10
+exact = math.lgamma(n + 1)  # log(n!)
+approx = ramanujan_log_factorial(n)
+print(f"Exact log(10!): {exact:.10f}")
+print(f"Ramanujan:      {approx:.10f}")
+print(f"Error:          {abs(exact - approx):.2e}")
 
 # This function simply helps calculating the number of monomers in a PEG chain of a given molecular weight
 def Nmonomers( MW ):
@@ -170,6 +185,8 @@ class MultivalentBinding:
                                    verbose = False):
         R_NP = self.R_NP
 
+        Area = mp.pi * R_NP**2  # Approximate adsorption area of the nanoparticle 
+
         if self.binding_model == "saddle":
             N_long = self.data_polymers["ligands"]["N"]
             a = self.data_polymers["ligands"]["a"]
@@ -216,7 +233,6 @@ class MultivalentBinding:
                 return K_bind
         
             # Binding constant using saddle point approximation
-            Area = mp.pi * N_long * a**2  # Approximate area spanned by ligand
             energy_min = np.trapz([force(h) for h in np.linspace(z_bind, z_max, 100)],
                                   np.linspace(z_bind, z_max, 100))
         
@@ -229,9 +245,10 @@ class MultivalentBinding:
         
         elif self.binding_model == "exact":
             #"""Calculate binding constant using Derjaguin approximation"""
-            z_max = self.N_long * self.a_mono
-            N = self.N_long
-            a = self.a_mono
+            N_long = self.data_polymers["ligands"]["N"]
+            a = self.data_polymers["ligands"]["a"]
+            z_max = N_long * a
+            #N = N_long
             def force(h):
                 W_total = self.W_total(h, 
                                         sigma_R = sigma_R, 
@@ -257,32 +274,88 @@ class MultivalentBinding:
             def integrand(h):
                 return mp.exp(-A(h)/self.kT)
         
-            A_L = mp.pi * N * a**2  # Approximate area spanned by ligand
-        
-            K_bind = A_L *  np.trapz([integrand(h) for h in np.linspace(0, z_max, 100)],
+            K_bind = Area *  np.trapz([integrand(h) for h in np.linspace(0, z_max, 100)],
                                     np.linspace(0, z_max, 100))
             return K_bind
     
-    def calculate_bound_fraction(self, K_bind, verbose = False):
+    def calculate_bound_fraction(self, K_bind_0,
+                                sigma_R, 
+                                include_fluctuations:bool = False, # whether to include fluctuations in number of receptors per site
+                                depletion:bool = True, # whether to assume Langmuir adsorption (infinite bulk) 
+                                                        # or take depletion of NPs into account (finite bulk)
+                                max_factor = 3, # maximum factor to multiply the average number of receptors per site in summing poisson distribution
+                                verbose:bool = False):
         A_cell = self.A_cell
         NP_conc = self.NP_conc
         cell_conc = self.cell_conc
         R_NP = self.R_NP
-        """Calculate fraction of bound nanoparticles"""
-        if K_bind == np.inf:
-            return 1.0
-        else:
-            M_conc = (A_cell/(np.pi * R_NP**2)) * cell_conc
+        NP_area = mp.pi * R_NP**2 
+        NR_ave = NP_area * sigma_R 
+        M_conc = (A_cell/NP_area) * cell_conc
+        """Calculate fraction of nanoparticles in solution that are bound to the cell"""
+        if depletion and not include_fluctuations:
+            K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
+           
+            if K_bind == np.inf:
+                max_ads = M_conc
+                bound_fraction = min( 1.0, max_ads / NP_conc )
+            else:
+                term = (NP_conc + M_conc) * K_bind + 1 
+                sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
         
-            term = (NP_conc + M_conc) * K_bind + 1 
-            sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
-        
-            NP_M_conc = (term - sqrt_term)/(2 * K_bind)
+                NP_M_conc = (term - sqrt_term)/(2 * K_bind)
 
-            bound_fraction = NP_M_conc / NP_conc
+                bound_fraction = NP_M_conc / NP_conc
+                if verbose:
+                    print( f'term: {term}, sqrt_term: {sqrt_term}, NP_M_conc: {NP_M_conc}' )
+                    print( f'M concentration / NP_conc: {M_conc/NP_conc}, bound fraction: {bound_fraction}' )
 
-            if verbose:
-                print( f'term: {term}, sqrt_term: {sqrt_term}, NP_M_conc: {NP_M_conc}' )
-                print( f'M concentration / NP_conc: {M_conc/NP_conc}, bound fraction: {bound_fraction}' )
+
+        if depletion and include_fluctuations:
+            K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
+            if K_bind == np.inf:
+                f = 1.0 - mp.exp(-NR_ave) # This is equivalent to the fraction of sites with at least one receptor
+                max_ads = M_conc * f
+                bound_fraction = min( 1.0, max_ads / NP_conc )
+            else:
+                bound_fraction = 0.0
+                for NR in range( 1, int(NR_ave) + max_factor * (int(NR_ave) + 1) ):
+                    sigma_R_i = NR / NP_area
+                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                    term = (NP_conc + M_conc) * K_bind + 1 
+                    sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
+                    NP_M_conc = (term - sqrt_term)/(2 * K_bind)
+                    bound_fraction += poisson_distribution( NR, NR_ave ) * NP_M_conc / NP_conc
+        if not depletion and not include_fluctuations: # Langmuir adsorption (infinite bulk)
+            K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
+            if K_bind == np.inf:
+                bound_fraction = 1.0
+            else:
+                return NP_conc * K_bind / (1 + NP_conc * K_bind)
         
-            return bound_fraction
+        if not depletion and include_fluctuations: # Langmuir with fluctuations in number of receptors per site
+            if K_bind == np.inf:
+                bound_fraction = 1.0 - mp.exp(-NR_ave) # This is equivalent to the fraction of sites with at least one receptor
+            else:
+                bound_fraction = 0.0
+                for NR in range( 1, int(NR_ave) + max_factor * (int(NR_ave) + 1) ):
+                    sigma_R_i = NR / NP_area
+                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                    bound_fraction += poisson_distribution( NR, NR_ave ) * NP_conc * K_bind / (1 + NP_conc * K_bind )
+        return bound_fraction
+
+
+def poisson_distribution( k, average_k ):
+    try:
+        result = mp.exp(-average_k) * mp.power( average_k, k ) / mp.factorial( k )
+    except ValueError:
+        # Use Ramanujan approximation for log(k!) 
+        log_result = -average_k + k * math.log(average_k) - ramanujan_log_factorial(k)
+        result = mp.exp(log_result)
+    return result
+
+def ramanujan_log_factorial(n):
+    """Ramanujan's approximation for log(n!)"""
+    return (n * math.log(n) - n 
+            + (1/6) * math.log(8*n**3 + 4*n**2 + n + 1/30) 
+            + 0.5 * math.log(math.pi))
