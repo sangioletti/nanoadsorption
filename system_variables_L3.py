@@ -2,12 +2,22 @@ from units import *
 import numpy as np
 from adsorption import Nmonomers
 
-# Define parameters describing the target
-V_SPR = 6 * 10**(-5) * mL # Volume of Liquid above SPR
-cell_conc = 1 / V_SPR # 1 SPR chip in total volume
-A_cell = 10**6 * um2 # Cell area - this is the SPR chip area
+# Define parameters describint the target: T cells in the spleen
+# This info should be checked, for now it is just a search from chatGPT
+N_lympho = 7.5e7 # Average number of lymphocytes in mouse spleen
+N_T_cells = 0.25 * N_lympho # Number of T cells in mouse spleen
+V_spleen = 100 * mm3 # Volume of mouse spleen
+cell_conc = N_T_cells / V_spleen # T cell concentration in the spleen
+A_cell = 100 * um2 # Cell area 
 
-NP_conc=4*10**11 / mL
+#****Dosing particles intravenously to animal******
+# These are parameters controlling the dosing of the nanoparticles in a typical experiments
+# Provided by Lennart Lindfors
+Npdosing=64e12 / mL # Number of particles in dosing solution per mL [mL-1]
+Vdosing=5*0.02 * mL # Dosing volume for each animal [mL] (e.g. 5 mL/kg and animal weight 0.02 kg)
+fTzone=0.1 # Fraction of dosed particles that ends up in T zone of animal spleen
+VTzone=0.5*0.084 * mL # Volume of spleen Tzone in animal [mL] (Assuming 50% of mouse spleen of volume 0.084 mL)
+NP_conc=Npdosing*Vdosing*fTzone/VTzone # Number of particles per mL in Tzone of mouse spleen [mL-1]
 
 
 ######################################################
@@ -34,7 +44,7 @@ A3 = - 2.0 * R_NP ** 3 * ( 1.0 - (R_NP + PEG2K_ee) / (R_NP + PEG_ligands_max_ext
 v_bind = A1 * ( A2 + A3 ) 
 
 # Define the binding constant for ligand-receptor binding in solution
-KD = 150.0 * nM # Dissociation constant in solution between ligand-receptor
+KD = 10000.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
 data_polymers = {}

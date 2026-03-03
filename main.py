@@ -1,6 +1,6 @@
 from adsorption import *
 from units import *
-from system_variables import *
+from system_variables_L3 import *
 from mpmath import mp
 
 precision = mp.dps = 50 # Represent number with 50 digits precision, necessary 
@@ -19,6 +19,7 @@ sigma_R_min = 1.0 / um2 # Minimum receptor surface density.
                         # Corresponds to average distance between receptors is 1 um
 sigma_R_max = 1e4 / um2 # Maximum receptor surface density
                         # Corresponds to average distance between receptors is 10 nm
+NP_area = R_NP**2 * np.pi
 
 # Create the system
 system = MultivalentBinding( kT=kT, R_NP = R_NP, 
@@ -38,25 +39,49 @@ with open( 'adsorption.dat', 'w+' ) as f:
     #print( f'Binding sites concentration {M_conc/(1/mL):5.3e} (1/mL)' )
     #print( f'Max adsorbed fraction achievable: min(1, M_conc/NP_conc) = {min(1, M_conc/NP_conc):5.3e}' )
     #f.write( f'sigma_R (um^-2) KD_eff (M) adsorbed_fraction\n' )
-    for sigma_R in np.logspace( min_exp, max_exp, n_sampling_points ):
-        K_bind = system.calculate_binding_constant( 
-                                                          K_bind_0=K_bind_0, 
-                                                          sigma_R = sigma_R, 
+    sigma_R_values = np.logspace( min_exp, max_exp, n_sampling_points )
+    cached_K_bind = np.zeros(n_sampling_points)
+
+    for i, sigma_R in enumerate(sigma_R_values):
+        cached_K_bind[i] = system.calculate_binding_constant(
+                                                         K_bind_0=K_bind_0,
+                                                          sigma_R = sigma_R,
                                                           verbose = verbose)
-        
-        #print( f'Effective dissociation constant (M): {float((1.0 / K_bind) / M):5.3e}' )
-        # Now we can calculate the adsorbed fraction
-        adsorbed_fraction = system.calculate_bound_fraction( K_bind_0=K_bind_0,
-                                sigma_R=sigma_R, 
-                                include_fluctuations=False, # whether to include fluctuations in number of receptors per site
-                                depletion=True, # whether to assume Langmuir adsorption (infinite bulk) or take depletion of NPs into account (finite bulk)
-                                max_factor = 4, # maximum factor to multiply the average number of receptors per site in summing poisson distribution
+    print( f"K_bind calculated")
+    
+    max_NR_ave = int( mp.pi * system.R_NP**2 * sigma_R_max )
+    max_N_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1  # Match formula in calculate_bound_fraction_with_fluctuations
+
+    print( f"Max number of receptors to consider: {max_N_receptor}")
+
+    bound_vs_receptor = system.calculate_bound_vs_receptors(
+                                K_bind_0,
+                                max_N_receptor, 
+                                depletion = True, 
                                 verbose = False)
+
+    
+    for i, sigma_R in enumerate(sigma_R_values):
+        #print(f"Step {i}, sigma {sigma_R}")
+        bound_fraction = system.calculate_bound_fraction_with_fluctuations(
+                                K_bind_0,
+                                sigma_R,
+                                bound_vs_receptor,
+                                verbose = False
+                                )
+
         # Print the adsorbed fraction
         out1 = float(sigma_R/(1/um2))
-        out2 = float((1 / K_bind) / M)
-        out3 = float(adsorbed_fraction)
-        f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e}\n""")
+        out2 = float((1 / cached_K_bind[i]) / M)
+        out3 = float(bound_fraction)
+        if depletion:
+            out4 = float(bound_fraction) * NP_conc
+        else:
+            out4 = float(bound_fraction) * (A_cell/NP_area)
+
+        f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e}\n""")
+        print( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e}\n""")
+        #f.write( f"""{out1:5.3e}  {out3:5.3e}\n""")
         #print( f'Adsorbed fraction, ideal polymer: {out3:5.3e}' )
         #print( "------------------" )
 
@@ -68,6 +93,7 @@ data = np.loadtxt( 'adsorption.dat', skiprows=2 )
 plt.xscale( 'log' )
 plt.yscale( 'linear' )
 plt.plot( data[:,0], data[:,2], linestyle='solid' )
+#plt.plot( data[:,0], data[:,1], linestyle='solid' )
 plt.xlabel( 'Receptor surface density $(\mu$m$^{-2}$)' )
 plt.ylabel( 'Adsorbed fraction' )
 plt.legend()

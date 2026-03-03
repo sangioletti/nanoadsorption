@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import erf
 from scipy.optimize import fsolve, minimize
-from scipy.integrate import quad    
+from scipy.integrate import quad, cumulative_trapezoid
 from mpmath import mp
 import math
 
@@ -46,25 +46,37 @@ class MultivalentBinding:
         self.NP_conc = NP_conc
         self.cell_conc = cell_conc
 
+        # Precompute constant derived quantities
+        self.NP_area = mp.pi * R_NP**2
+
+        # Precompute polymer-related constants
+        N_lig = data_polymers["ligands"]["N"]
+        a_lig = data_polymers["ligands"]["a"]
+        self._Ree_ligands = self.r_ee(N_lig, a_lig)
+        self._r_ee2_ligands = self._Ree_ligands**2
+        self._klr_prefactor_factor = np.sqrt(12.0 / (np.pi * self._r_ee2_ligands))
+        self._klr_erf_factor_num = 3.0 / (4.0 * self._r_ee2_ligands)
+        self._klr_erf_factor_den = 3.0 / (2.0 * self._r_ee2_ligands)
+
+        # Precompute steric factors for each polymer type (keyed by "name" field)
+        self._polymer_steric_factor = {}
+        for key, poly in data_polymers.items():
+            N_p = poly["N"]
+            a_p = poly["a"]
+            self._polymer_steric_factor[poly["name"]] = 3.0 / (2.0 * N_p * a_p**2)
+
     def K_LR(self, h, N, a, K_bind_0):
         """Calculate area-weighted average bond strength K_LR(h) between ligand-receptor pairs,
         assuming the planes containing ligands and receptors are parallel and at a distance 'h'
         from each other.
-        K_LR is calculated assuming receptors are fixed point on a surface and ligands are tethered to 
+        K_LR is calculated assuming receptors are fixed point on a surface and ligands are tethered to
         a NP by a Gaussian polymer chain"""
         if self.polymer_model in [ "gaussian", "Flory" ]:
-            # Note that even in the Flory model, close to its minimum the behaviour will be quadratic/Gaussian, albeit
-            # shifted at a different average which is that given by the Flory exponent for a self-avoiding walk
-            r_ee2 = self.r_ee( N, a )**2
-            #prefactor = K_bind_0 * np.sqrt( 12.0 / ( np.pi * N * a**2)) 
-            #exp_term = np.exp(-3.0 * h / (4 * N * a**2))
-            #erf_num = erf(np.sqrt(3 * h**2/(4 * N * a**2)))
-            #erf_den = erf(np.sqrt(3 * h**2/(2 * N * a**2)))
-            
-            prefactor = K_bind_0 * np.sqrt( 12.0 / ( np.pi * r_ee2)) 
-            exp_term = np.exp(-3.0 * h**2 / (4 * r_ee2))
-            erf_num = erf(np.sqrt(3 * h**2/(4 * r_ee2)))
-            erf_den = erf(np.sqrt(3 * h**2/(2 * r_ee2)))
+            prefactor = K_bind_0 * self._klr_prefactor_factor
+            h2 = h**2
+            exp_term = np.exp(-h2 * self._klr_erf_factor_num)
+            erf_num = erf(np.sqrt(h2 * self._klr_erf_factor_num))
+            erf_den = erf(np.sqrt(h2 * self._klr_erf_factor_den))
 
             if h == 0:
                 return prefactor / np.sqrt(2.0)
@@ -142,7 +154,7 @@ class MultivalentBinding:
 
         res = 0.0
         for polymer in self.data_polymers.values():
-            res = self.W_polymer( h, polymer, verbose = verbose )
+            res += self.W_polymer( h, polymer, verbose = verbose )
         return res
     
     def W_polymer( self, h, data, verbose = False):
@@ -150,7 +162,7 @@ class MultivalentBinding:
         # This is to avoid numerical problems
         assert self.polymer_model in [ "gaussian", "Flory" ], AssertionError( f"Repulsion implemented only for gaussian polymer")
         check = isinstance( h, np.ndarray)
-        
+
         if check:
             h = mp.mpf(h[0])
         else:
@@ -160,140 +172,201 @@ class MultivalentBinding:
             res = np.inf
         else:
             name = data["name"]
-            N = data[ "N" ]
-            a = data[ "a" ]
             sigma = data[ "sigma" ]
-            res = -self.kT * sigma * mp.log(mp.erf( mp.sqrt( 3 * h**2 / (2 * N * a**2))))
+            steric_factor = self._polymer_steric_factor[name]
+            res = -self.kT * sigma * mp.log(mp.erf( mp.sqrt( steric_factor * h**2 )))
         if verbose:
             print( f'Steric repulsion from polymer {name}: {res}' )
         return res
     
     def W_total(self, h, sigma_R, K_bind_0, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        N_long = self.data_polymers["ligands"]["N"]
-        a = self.data_polymers["ligands"]["a"]
-        Ree = self.r_ee( N_long, a )
         W_bond = self.W_bond(h, sigma_R, K_bind_0, verbose)
         W_steric = self.W_steric( h, verbose)
         if verbose:
+            Ree = self._Ree_ligands
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant(self, K_bind_0,
+    def calculate_binding_constant( self, K_bind_0,
                                    sigma_R,
                                    z_max = None, 
-                                   verbose = False):
-        R_NP = self.R_NP
+                                   verbose = False,
+                                    ):
 
-        Area = mp.pi * R_NP**2  # Approximate adsorption area of the nanoparticle 
+            if K_bind_0 == np.inf:
+                return np.inf
 
-        if self.binding_model == "saddle":
-            N_long = self.data_polymers["ligands"]["N"]
-            a = self.data_polymers["ligands"]["a"]
-            z_max = N_long * a
-            #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
-            def force(h):
-                return 2 * np.pi * R_NP * self.W_total(h, 
+
+            R_NP = self.R_NP
+
+            Area = self.NP_area  # Approximate adsorption area of the nanoparticle
+
+            if self.binding_model == "saddle":
+                N_long = self.data_polymers["ligands"]["N"]
+                a = self.data_polymers["ligands"]["a"]
+                z_max = N_long * a
+                #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
+                def force(h):
+                    return 2 * np.pi * R_NP * self.W_total(h, 
                                                        sigma_R = sigma_R, 
                                                        K_bind_0 = K_bind_0, 
                                                        verbose = verbose 
                                                        )
         
-            # Find equilibrium binding distance where W_total = 0
-            def find_z_bind(h):
-                return self.W_total(h, 
+                # Find equilibrium binding distance where W_total = 0
+                def find_z_bind(h):
+                    return self.W_total(h, 
                                     sigma_R = sigma_R, 
                                     K_bind_0 = K_bind_0, 
                                     verbose = verbose 
                                     )
 
-            R_ee = self.r_ee( N_long, a ) 
+                R_ee = self._Ree_ligands
 
-            initial_guess = R_ee
-            bounds = [(0.0, z_max)]
-            result = minimize(find_z_bind, initial_guess, bounds=bounds)
-            z_bind = result.x[ 0 ]
+                initial_guess = R_ee
+                bounds = [(0.0, z_max)]
+                result = minimize(find_z_bind, initial_guess, bounds=bounds)
+                z_bind = result.x[ 0 ]
         
-            if z_bind > z_max:
-                raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
+                if z_bind > z_max:
+                    raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
 
-            if verbose:
-                print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
-                print( f'Equilibrium binding distance, normalized to max linear extension: {z_bind / z_max }' )       
+                if verbose:
+                    print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
+                    print( f'Equilibrium binding distance, normalized to max linear extension: {z_bind / z_max }' )       
 
-            # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
-            dh = 1e-8  # Small step for numerical derivative
-            F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
-            #print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
-            #print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
-            try:
-                assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
-            except:
-                K_bind = np.inf
+                # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
+                dh = 1e-8  # Small step for numerical derivative
+                F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
+                #print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
+                #print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
+                try:
+                    assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
+                except:
+                    K_bind = np.inf
+                    return K_bind
+        
+                # Binding constant using saddle point approximation
+                h_grid_saddle = np.linspace(z_bind, z_max, 100)
+                energy_min = np.trapz([force(h) for h in h_grid_saddle], h_grid_saddle)
+        
+                if verbose:
+                    print( f'Energy minimum: {energy_min}' )
+                    print( f'Second derivative at minimum: {F_prime}' )
+
+                K_bind = Area * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.    kT))
                 return K_bind
         
-            # Binding constant using saddle point approximation
-            energy_min = np.trapz([force(h) for h in np.linspace(z_bind, z_max, 100)],
-                                  np.linspace(z_bind, z_max, 100))
-        
-            if verbose:
-                print( f'Energy minimum: {energy_min}' )
-                print( f'Second derivative at minimum: {F_prime}' )
+            elif self.binding_model == "exact":
+                #"""Calculate binding constant using Derjaguin approximation"""
+                N_long = self.data_polymers["ligands"]["N"]
+                a = self.data_polymers["ligands"]["a"]
+                z_max = N_long * a
 
-            K_bind = Area * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.kT))
-            return K_bind
-        
-        elif self.binding_model == "exact":
-            #"""Calculate binding constant using Derjaguin approximation"""
-            N_long = self.data_polymers["ligands"]["N"]
-            a = self.data_polymers["ligands"]["a"]
-            z_max = N_long * a
-            #N = N_long
-            def force(h):
-                W_total = self.W_total(h, 
-                                        sigma_R = sigma_R, 
-                                        K_bind_0 = K_bind_0, 
-                                        verbose = verbose 
-                                        )
-                if verbose:
-                    print( f'W_total: {W_total} (kbT/nm^2)' )
-                    print( f'Force: {2 * mp.pi * R_NP * W_total} (kbT/nm)' )
-                return 2 * mp.pi * R_NP * W_total
+                # Precompute force on a single grid (instead of 100x100 redundant evaluations)
+                n_grid = 200
+                h_grid = np.linspace(0, z_max, n_grid)
+                force_grid = np.array([
+                    float(2 * mp.pi * R_NP * self.W_total(h, sigma_R=sigma_R,
+                                                          K_bind_0=K_bind_0, verbose=verbose))
+                    for h in h_grid
+                ])
 
-            def A(h):
-                force_values = [force(x) for x in np.linspace(h, z_max, 100)]
-                x_values = np.linspace(h, z_max, 100)
-                Ah = np.trapz(force_values, x_values )
-                minAh = np.min(force_values) * ( z_max - h )
-                assert Ah >= minAh, AssertionError( f'This should not happen: Ah: {Ah} < minAh: {minAh}' )
-                if verbose:
-                    print( f'h {h}, A(h) {Ah}' )
+                # A(h) = integral from h to z_max of force(x)dx
+                # Compute via reverse cumulative trapezoid for all grid points at once
+                A_grid = np.zeros(n_grid)
+                # cumulative_trapezoid on reversed arrays gives cumulative integral from z_max backwards
+                A_grid[:-1] = cumulative_trapezoid(force_grid[::-1], h_grid[::-1])[::-1] * (-1)
+                # A_grid[-1] = 0 (integral from z_max to z_max)
 
-                return Ah
-        
-            def integrand(h):
-                return mp.exp(-A(h)/self.kT)
-        
-            K_bind = Area *  np.trapz([integrand(h) for h in np.linspace(0, z_max, 100)],
-                                    np.linspace(0, z_max, 100))
-            return K_bind
-    
-    def calculate_bound_fraction(self, K_bind_0,
-                                sigma_R, 
-                                include_fluctuations:bool = False, # whether to include fluctuations in number of receptors per site
+                integrand_grid = np.array([float(mp.exp(-A_grid[i] / self.kT))
+                                           for i in range(n_grid)])
+                K_bind = Area * np.trapz(integrand_grid, h_grid)
+
+                return K_bind
+
+    def calculate_bound_vs_receptors(self, 
+                                K_bind_0,
+                                max_N_receptor, 
                                 depletion:bool = True, # whether to assume Langmuir adsorption (infinite bulk) 
                                                         # or take depletion of NPs into account (finite bulk)
-                                max_factor = 3, # maximum factor to multiply the average number of receptors per site in summing poisson distribution
                                 verbose:bool = False):
         A_cell = self.A_cell
         NP_conc = self.NP_conc
         cell_conc = self.cell_conc
-        R_NP = self.R_NP
-        NP_area = mp.pi * R_NP**2 
-        NR_ave = NP_area * sigma_R 
+        NP_area = self.NP_area
         M_conc = (A_cell/NP_area) * cell_conc
         """Calculate fraction of nanoparticles in solution that are bound to the cell"""
-        if depletion and not include_fluctuations:
+        bound_vs_receptor = np.zeros( max_N_receptor )
+        
+       
+        if depletion:
+            for NR in range( 1, max_N_receptor ):
+                #print(f"NR {NR}")
+                sigma_R_i = NR / NP_area
+                K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                if K_bind == np.inf:
+                    #f = 1.0 - mp.exp(-NR) # This is equivalent to the fraction of #sites with at least one receptor
+                    #max_ads = M_conc * f
+                    bound_vs_receptor[NR] = M_conc / NP_conc 
+                else:
+                    term = (NP_conc + M_conc) * K_bind + 1 
+                    sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
+                    NP_M_conc = (term - sqrt_term)/(2 * K_bind)
+                    bound_vs_receptor[NR] = NP_M_conc / NP_conc
+        
+        
+        else: # Langmuir with fluctuations in number of receptors per site
+            for NR in range( 1, max_N_receptor ):
+                #print(f"NR {NR}")
+                sigma_R_i = NR / NP_area
+                K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                if K_bind == np.inf:
+                    bound_vs_receptor[NR] = 1.0
+                else:
+                    bound_vs_receptor[NR] = NP_conc * K_bind / (1 + NP_conc * K_bind )
+
+        return bound_vs_receptor
+    
+    
+    def calculate_bound_fraction_with_fluctuations(self, K_bind_0,
+                                sigma_R, 
+                                bound_vs_receptor,
+                                verbose:bool = False,
+                                max_factor = 4
+                                ):
+        NP_area = self.NP_area
+        NR_ave = NP_area * sigma_R
+        """Calculate fraction of nanoparticles in solution that are bound to the cell"""
+
+        int_NR_ave = int(NR_ave)
+        max_NR = int_NR_ave + max_factor * (int_NR_ave + 1)
+        print( f"Max number of receptors required: {max_NR}")
+        print( f"Max number of receptors for which binding was calculated: {len(bound_vs_receptor)}")
+        assert len(bound_vs_receptor) >= max_NR # Check all necessary values are stored
+        poisson = np.zeros(max_NR)
+
+        exp_neg_avg = mp.exp(-NR_ave)
+        for NR in range( 1, max_NR ):
+            poisson[NR] = poisson_distribution( NR, NR_ave, exp_neg_avg )
+
+        bound_fraction = min(1, np.sum( bound_vs_receptor[:len(poisson)] * poisson ))
+
+        return bound_fraction
+
+
+    def calculate_bound_fraction(self, K_bind_0,
+                                sigma_R, 
+                                depletion:bool = True, # whether to assume Langmuir adsorption (infinite bulk) 
+                                                        # or take depletion of NPs into account (finite bulk)
+                                verbose:bool = False):
+        NP_conc = self.NP_conc
+        cell_conc = self.cell_conc
+        R_NP = self.R_NP
+        M_conc = (A_cell/NP_area) * cell_conc
+        """Calculate fraction of nanoparticles in solution that are bound to the cell"""
+        if depletion:
             K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
            
             if K_bind == np.inf:
@@ -309,47 +382,25 @@ class MultivalentBinding:
                 if verbose:
                     print( f'term: {term}, sqrt_term: {sqrt_term}, NP_M_conc: {NP_M_conc}' )
                     print( f'M concentration / NP_conc: {M_conc/NP_conc}, bound fraction: {bound_fraction}' )
-
-
-        if depletion and include_fluctuations:
-            K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
-            if K_bind == np.inf:
-                f = 1.0 - mp.exp(-NR_ave) # This is equivalent to the fraction of sites with at least one receptor
-                max_ads = M_conc * f
-                bound_fraction = min( 1.0, max_ads / NP_conc )
-            else:
-                bound_fraction = 0.0
-                for NR in range( 1, int(NR_ave) + max_factor * (int(NR_ave) + 1) ):
-                    sigma_R_i = NR / NP_area
-                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
-                    term = (NP_conc + M_conc) * K_bind + 1 
-                    sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
-                    NP_M_conc = (term - sqrt_term)/(2 * K_bind)
-                    bound_fraction += poisson_distribution( NR, NR_ave ) * NP_M_conc / NP_conc
-        if not depletion and not include_fluctuations: # Langmuir adsorption (infinite bulk)
+        else:
+            # Simple langmuir adsorption (infinite bulk)
             K_bind = self.calculate_binding_constant( K_bind_0, sigma_R )
             if K_bind == np.inf:
                 bound_fraction = 1.0
             else:
                 return NP_conc * K_bind / (1 + NP_conc * K_bind)
         
-        if not depletion and include_fluctuations: # Langmuir with fluctuations in number of receptors per site
-            if K_bind == np.inf:
-                bound_fraction = 1.0 - mp.exp(-NR_ave) # This is equivalent to the fraction of sites with at least one receptor
-            else:
-                bound_fraction = 0.0
-                for NR in range( 1, int(NR_ave) + max_factor * (int(NR_ave) + 1) ):
-                    sigma_R_i = NR / NP_area
-                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
-                    bound_fraction += poisson_distribution( NR, NR_ave ) * NP_conc * K_bind / (1 + NP_conc * K_bind )
         return bound_fraction
 
 
-def poisson_distribution( k, average_k ):
+
+def poisson_distribution( k, average_k, exp_neg_avg=None ):
+    if exp_neg_avg is None:
+        exp_neg_avg = mp.exp(-average_k)
     try:
-        result = mp.exp(-average_k) * mp.power( average_k, k ) / mp.factorial( k )
+        result = exp_neg_avg * mp.power( average_k, k ) / mp.factorial( k )
     except ValueError:
-        # Use Ramanujan approximation for log(k!) 
+        # Use Ramanujan approximation for log(k!)
         log_result = -average_k + k * math.log(average_k) - ramanujan_log_factorial(k)
         result = mp.exp(log_result)
     return result
