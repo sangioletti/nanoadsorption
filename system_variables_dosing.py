@@ -2,20 +2,22 @@ from units import *
 import numpy as np
 from adsorption import Nmonomers
 
-# Define parameters describing the target
-V_SPR = 6 * 10**(-5) * mL # Volume of Liquid above SPR
-cell_conc = 1 / V_SPR # 1 SPR chip in total volume
-A_cell = 10**6 * um2 # Cell area - this is the SPR chip area
-NP_conc=4*10**11 / mL
+V_SPR = 6 * 10**(-5) * mL # Volume of water over SPR chip
+A_SPR = 1 * mm2 # Cell area 
 
+#****Dosing particles intravenously to animal******
+# These are parameters controlling the dosing of the nanoparticles in a typical experiments
+Npdosing_base = 4e11 / mL
+NP_conc = Npdosing_base
+cell_conc = 1 / V_SPR # concentration of SPR chip 
 
 ######################################################
 # Here we define the DESIGN OF MULTIVALENT NANOPARTICLE
 ######################################################
 
 R_NP = 35 * nm # Nanoparticle radius in units of length
-N_ligands = 20 # Number of ligands on the nanoparticle
-sigma_L = 150.0 / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
+N_ligands = 150 # Number of ligands on the nanoparticle
+sigma_L = N_ligands / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
 sigma_P2K = 1.0 / ( 2.0 * nm )**2  # Surface density of short PEG chains, inert and NOT functionalised
 
 # We assume the presence of short (inert) PEG chains + additional ligands on the nanoparticles
@@ -33,7 +35,7 @@ A3 = - 2.0 * R_NP ** 3 * ( 1.0 - (R_NP + PEG2K_ee) / (R_NP + PEG_ligands_max_ext
 v_bind = A1 * ( A2 + A3 ) 
 
 # Define the binding constant for ligand-receptor binding in solution
-KD = 150.0 * nM # Dissociation constant in solution between ligand-receptor
+KD = 1500 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
 data_polymers = {}

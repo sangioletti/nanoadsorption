@@ -19,7 +19,7 @@ sigma_R_values = np.logspace(min_exp, max_exp, n_sampling_points)
 
 # KD factors: 10^-3, 10^-2, 10^-1, 1, 10, 100, 1000
 # Base KD from system_variables_L3.py: 10000.0 * nM
-KD_factors = [10**k for k in range(-12, -8)]
+KD_factors = [10**k for k in range(-12, -11)]
 
 NP_area_val = mp.pi * R_NP**2
 M_conc = (A_cell / NP_area_val) * cell_conc

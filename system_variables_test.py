@@ -2,11 +2,11 @@ from units import *
 import numpy as np
 from adsorption import Nmonomers
 
-# Define parameters describing the target
-V_SPR = 6 * 10**(-5) * mL # Volume of Liquid above SPR
-cell_conc = 1 / V_SPR # 1 SPR chip in total volume
-A_cell = 10**6 * um2 # Cell area - this is the SPR chip area
-NP_conc=4*10**11 / mL
+V_SPR = 6 * 10**(-5 ) * mL
+A_SPR = 1 * mm2 # Cell area 
+
+Npdosing=4e13 / mL # Number of particles in dosing solution per mL [mL-1]
+NP_conc=Npdosing
 
 
 ######################################################
@@ -14,7 +14,7 @@ NP_conc=4*10**11 / mL
 ######################################################
 
 R_NP = 35 * nm # Nanoparticle radius in units of length
-N_ligands = 20 # Number of ligands on the nanoparticle
+N_ligands = 150 # Number of ligands on the nanoparticle
 sigma_L = 150.0 / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
 sigma_P2K = 1.0 / ( 2.0 * nm )**2  # Surface density of short PEG chains, inert and NOT functionalised
 
@@ -33,7 +33,7 @@ A3 = - 2.0 * R_NP ** 3 * ( 1.0 - (R_NP + PEG2K_ee) / (R_NP + PEG_ligands_max_ext
 v_bind = A1 * ( A2 + A3 ) 
 
 # Define the binding constant for ligand-receptor binding in solution
-KD = 150.0 * nM # Dissociation constant in solution between ligand-receptor
+KD = 10000.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
 data_polymers = {}

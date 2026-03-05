@@ -286,42 +286,58 @@ class MultivalentBinding:
 
                 return K_bind
 
-    def calculate_bound_vs_receptors(self, 
+    def calculate_K_bind_vs_receptors(self, K_bind_0, max_N_receptor, verbose=False):
+        """Precompute K_bind for each integer NR from 0 to max_N_receptor-1."""
+        NP_area = self.NP_area
+        K_bind_vs_NR = np.empty(max_N_receptor, dtype=object)
+        K_bind_vs_NR[0] = 0.0
+        for NR in range(1, max_N_receptor):
+            sigma_R_i = NR / NP_area
+            K_bind_vs_NR[NR] = self.calculate_binding_constant(K_bind_0, sigma_R_i, verbose=verbose)
+        return K_bind_vs_NR
+
+    def calculate_bound_vs_receptors(self,
                                 K_bind_0,
-                                max_N_receptor, 
-                                depletion:bool = True, # whether to assume Langmuir adsorption (infinite bulk) 
-                                                        # or take depletion of NPs into account (finite bulk)
-                                verbose:bool = False):
+                                max_N_receptor,
+                                depletion:bool = True,
+                                verbose:bool = False,
+                                K_bind_vs_NR=None,
+                                NP_conc=None):
+        """Calculate fraction of nanoparticles bound for each integer NR.
+
+        If K_bind_vs_NR is provided, use pre-computed K_bind values instead of
+        recomputing them. If NP_conc is provided, override self.NP_conc."""
         A_cell = self.A_cell
-        NP_conc = self.NP_conc
+        NP_conc = NP_conc if NP_conc is not None else self.NP_conc
         cell_conc = self.cell_conc
         NP_area = self.NP_area
         M_conc = (A_cell/NP_area) * cell_conc
-        """Calculate fraction of nanoparticles in solution that are bound to the cell"""
         bound_vs_receptor = np.zeros( max_N_receptor )
-        
-       
+
+
         if depletion:
             for NR in range( 1, max_N_receptor ):
-                #print(f"NR {NR}")
-                sigma_R_i = NR / NP_area
-                K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
-                if K_bind == np.inf:
-                    #f = 1.0 - mp.exp(-NR) # This is equivalent to the fraction of #sites with at least one receptor
-                    #max_ads = M_conc * f
-                    bound_vs_receptor[NR] = M_conc / NP_conc 
+                if K_bind_vs_NR is not None:
+                    K_bind = K_bind_vs_NR[NR]
                 else:
-                    term = (NP_conc + M_conc) * K_bind + 1 
+                    sigma_R_i = NR / NP_area
+                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                if K_bind == np.inf:
+                    bound_vs_receptor[NR] = M_conc / NP_conc
+                else:
+                    term = (NP_conc + M_conc) * K_bind + 1
                     sqrt_term = mp.sqrt( mp.power( term, 2 ) - 4 * NP_conc * M_conc * K_bind**2 )
                     NP_M_conc = (term - sqrt_term)/(2 * K_bind)
                     bound_vs_receptor[NR] = NP_M_conc / NP_conc
-        
-        
+
+
         else: # Langmuir with fluctuations in number of receptors per site
             for NR in range( 1, max_N_receptor ):
-                #print(f"NR {NR}")
-                sigma_R_i = NR / NP_area
-                K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                if K_bind_vs_NR is not None:
+                    K_bind = K_bind_vs_NR[NR]
+                else:
+                    sigma_R_i = NR / NP_area
+                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
                 if K_bind == np.inf:
                     bound_vs_receptor[NR] = 1.0
                 else:
@@ -341,7 +357,7 @@ class MultivalentBinding:
         """Calculate fraction of nanoparticles in solution that are bound to the cell"""
 
         int_NR_ave = int(NR_ave)
-        max_NR = int_NR_ave + max_factor * (int_NR_ave + 1)
+        max_NR = int_NR_ave + max_factor * (int_NR_ave + 1) if int_NR_ave >1 else 100
         print( f"Max number of receptors required: {max_NR}")
         print( f"Max number of receptors for which binding was calculated: {len(bound_vs_receptor)}")
         assert len(bound_vs_receptor) >= max_NR # Check all necessary values are stored
@@ -355,6 +371,83 @@ class MultivalentBinding:
 
         return bound_fraction
 
+    def calculate_bound_fraction_with_fluctuations_correct(self, 
+                                K_bind_0,
+                                sigma_R, 
+                                K_bind_vs_receptors = None,
+                                verbose:bool = False,
+                                max_n_receptor = 200,
+                                NP_conc = None,
+                                rho_m = None,
+                                ):
+        NP_area = self.NP_area
+        NR_ave = NP_area * sigma_R
+        """Calculate fraction of nanoparticles in solution that are bound to the cell.
+        Not only includes fluctuations but also the self-consistency effect."""
+
+        if K_bind_vs_receptors is None:
+            K_i = self.calculate_K_bind_vs_receptors( K_bind_0, max_n_receptor )
+        else:
+            K_i = K_bind_vs_receptors
+
+        #print( f"K_i is {K_i}" )
+        rho_i, K_i, bound_fraction = self.self_consistent_rho( K_i, rho_m, NP_conc, NR_ave )
+
+        return bound_fraction, K_i
+
+    def self_consistent_rho( self, K_i, rho_m_tot, NP_conc, NR_ave, tol=1e-16, max_iter=2000 ):
+        n = len( K_i )
+        K = np.array( [float(K_i[i]) for i in range(n)] )
+        rho_m = np.zeros( n )
+        for i in range( n ):
+            rho_m[i] = poisson_distribution( i, NR_ave )
+        rho_m *= rho_m_tot
+
+        # Reduce to scalar equation in c = NP_conc - sum(rho), the free NP concentration.
+        # Each rho[i] = K[i]*rho_m[i]*c / (1 + K[i]*c), so:
+        # g(c) = NP_conc - c - sum_i[ K[i]*rho_m[i]*c / (1 + K[i]*c) ] = 0
+        Km = K * rho_m  # precompute K[i]*rho_m[i]
+
+        def g_and_gprime(c):
+            denom = 1.0 + K * c
+            g  = NP_conc - c - np.sum( Km * c / denom )
+            gp = -1.0 - np.sum( Km / denom**2 )
+            return g, gp
+
+        # Bracket: g(0)=NP_conc>0, g(NP_conc)<0
+        c_lo, c_hi = 0.0, float(NP_conc)
+        c = 0.5 * c_hi  # initial guess
+
+        for n_cycle in range( max_iter ):
+            g_val, gp_val = g_and_gprime( c )
+
+            # Update bracket BEFORE bisection fallback so that
+            # the fallback uses the tightened bracket
+            if g_val > 0:
+                c_lo = c
+            else:
+                c_hi = c
+
+            # Newton step with bisection safeguard
+            c_new = c - g_val / gp_val
+            if c_new <= c_lo or c_new >= c_hi:
+                c_new = 0.5 * (c_lo + c_hi)  # bisection fallback
+
+            if abs(c_new - c) < tol * float(NP_conc):
+                c = c_new
+                break
+            c = c_new
+
+        # Recover rho[i] from the converged c
+        denom = 1.0 + K * c
+        rho = Km * c / denom
+
+        # Compute bound fraction directly from c to avoid floating-point
+        # precision loss when summing rho[i] for large K[i] values
+        bound_fraction = 1.0 - c / float(NP_conc)
+
+        print( f"Self consistent solve finished, cycle {n_cycle}, free NP frac = {c/NP_conc:.6e}" )
+        return (rho, K_i, bound_fraction)
 
     def calculate_bound_fraction(self, K_bind_0,
                                 sigma_R, 

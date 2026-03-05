@@ -3,6 +3,7 @@ nm = 1.0 # 1 nm in units of length
 nm2 = nm*nm # 1 nm^2 in units of area
 nm3 = nm*nm*nm # 1 nm^3 in units of volume
 mm = 1e6 * nm # 1 mm in units of length
+mm2 =  mm**2 # 1 mm in units of length
 mm3 = mm**3 # 1 mm^3 in units of volume
 L = 1e24 * nm3 # 1 L in units of volume
 mL = 1e-3 * L # 1 mL in units of volume
