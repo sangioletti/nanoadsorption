@@ -1,6 +1,6 @@
 from adsorption import *
 from units import *
-from system_variables_L3 import *
+from system_variables_invivo import *
 from mpmath import mp
 
 precision = mp.dps = 50 # Represent number with 50 digits precision, necessary 
@@ -17,7 +17,7 @@ n_sampling_points = 50 #Number of sampling points for the receptor surface densi
 # for which calculations are made
 sigma_R_min = 1.0 / um2 # Minimum receptor surface density.
                         # Corresponds to average distance between receptors is 1 um
-sigma_R_max = 1e4 / um2 # Maximum receptor surface density
+sigma_R_max = 2000 / um2 # Maximum receptor surface density
                         # Corresponds to average distance between receptors is 10 nm
 NP_area = R_NP**2 * np.pi
 
@@ -63,7 +63,7 @@ with open( 'adsorption.dat', 'w+' ) as f:
     
     for i, sigma_R in enumerate(sigma_R_values):
         #print(f"Step {i}, sigma {sigma_R}")
-        bound_fraction = system.calculate_bound_fraction_with_fluctuations(
+        bound_fraction = system.calculate_bound_fraction_with_fluctuations_depletion(
                                 K_bind_0,
                                 sigma_R,
                                 bound_vs_receptor,
@@ -74,10 +74,7 @@ with open( 'adsorption.dat', 'w+' ) as f:
         out1 = float(sigma_R/(1/um2))
         out2 = float((1 / cached_K_bind[i]) / M)
         out3 = float(bound_fraction)
-        if depletion:
-            out4 = float(bound_fraction) * NP_conc
-        else:
-            out4 = float(bound_fraction) * (A_cell/NP_area)
+        out4 = float(bound_fraction) * NP_conc
 
         f.write( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e}\n""")
         print( f"""{out1:5.3e} {out2:5.3e} {out3:5.3e} {out4:5.3e}\n""")

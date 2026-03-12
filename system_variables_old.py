@@ -27,10 +27,10 @@ NP_conc=Npdosing*Vdosing*fTzone/VTzone # Number of particles per mL in Tzone of 
 R_NP = 35 * nm # Nanoparticle radius in units of length
 N_ligands = 150 # Number of ligands on the nanoparticle
 sigma_L = 150.0 / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
-sigma_P2K = 1.0 / ( 2.0 * nm )**2  # Surface density of short PEG chains, inert and NOT functionalised
-
+sigma_P2K = sigma_L * 11.4 
 # We assume the presence of short (inert) PEG chains + additional ligands on the nanoparticles
 amono = 0.28 * nm # Monomer size in PEG chain
+akuhn = 0.76 * nm
 NmonoLigands = Nmonomers( 3400 * g ) # Number of monomers in the PEG to which ligands are attached
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in th short, inert PEG chains
 PEG2K_ee = np.sqrt( NmonoShort ) * amono # end-to-end distance of the short PEG chain
@@ -48,5 +48,5 @@ KD = 10000.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
 data_polymers = {}
-data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K" }
-data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands" }
+data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K", 'akuhn' : akuhn }
+data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn }

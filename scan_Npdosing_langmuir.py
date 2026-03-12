@@ -1,6 +1,6 @@
 from adsorption import *
 from units import *
-from system_variables_invivo import *
+from system_variables_invitro import *
 from mpmath import mp
 import matplotlib.pyplot as plt
 
@@ -25,20 +25,16 @@ system_ref = MultivalentBinding(kT=kT, R_NP=R_NP,
                                 data_polymers=data_polymers,
                                 binding_model="exact",
                                 polymer_model="Flory-exact",
-                                A_cell=A_cell,
+                                A_cell=A_SPR,
                                 NP_conc=NP_conc,
                                 cell_conc=cell_conc)
 
 # Precompute K_bind for each NR once (expensive step, done only once)
-max_NR_ave = int(mp.pi * R_NP**2 * sigma_R_max)
-max_n_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1 if max_NR_ave > 1 else 50
+max_NR_ave = int((2 * R_NP)**2 * sigma_R_max)
+max_n_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1 if max_NR_ave > 1 else 20
 print(f"Computing K_bind for NR = 1..{max_n_receptor - 1} (this is the slow step, done only once)")
 K_bind_vs_NR = system_ref.calculate_K_bind_vs_receptors(K_bind_0, max_n_receptor)
 print("K_bind computation done.")
-
-M_conc = (A_cell / (2.0 * R_NP)**2) * cell_conc  # Concentration of binding sites for NPs
-
-# For each Npdosing factor, use the self-consistent solver
 results = {}
 
 for factor in factors:
@@ -46,53 +42,70 @@ for factor in factors:
     label = f"Npdosing x{factor:g}"
     print(f"\n--- {label} (NP_conc = {float(NP_conc_i):.3e} nm^-3) ---")
 
+    bound_vs_receptor = system_ref.calculate_bound_vs_receptors_monodisperse(K_bind_0, max_n_receptor, depletion=False, verbose=False, K_bind_vs_NR=K_bind_vs_NR, NP_conc=NP_conc_i)
+
     sigma_out = np.zeros(n_sampling_points)
     frac_out = np.zeros(n_sampling_points)
+    frac_out_max = np.zeros(n_sampling_points)
     nads_out = np.zeros(n_sampling_points)
+    nads_lennart_fraction = np.zeros(n_sampling_points)
 
-    K_bind_vs_receptors = K_bind_vs_NR  # reuse precomputed K_bind values
     for i, sigma_R in enumerate(sigma_R_values):
-        bound_fraction, K_bind_vs_receptors = system_ref.calculate_bound_fraction_with_fluctuations_depletion(
-                                K_bind_0,
-                                sigma_R,
-                                K_bind_vs_receptors,
-                                max_n_receptor=max_n_receptor,
-                                NP_conc=NP_conc_i,
-                                rho_m=M_conc,
-                                )
+        bound_fraction = system_ref.calculate_bound_fraction_with_fluctuations_langmuir(
+            K_bind_0,
+            sigma_R,
+            bound_vs_receptor,
+            verbose=False,
+            max_factor=4
+        )
 
+        max_num_sites = A_SPR / system_ref.NP_excluded_area
         sigma_out[i] = float(sigma_R / (1 / um2))
         frac_out[i] = float(bound_fraction)
-        nads_out[i] = float(bound_fraction) * NP_conc_i * VTzone
+        frac_out_max[i] = 1 - np.exp( -sigma_R * system_ref.NP_excluded_area )
+        nads_out[i] = float(bound_fraction) * max_num_sites 
+    
+    mass_SPR = V_SPR * NP_conc_i
+    mass_A_SPR = nads_out 
+    nads_lennart_fraction =  mass_A_SPR / ( mass_SPR + mass_A_SPR )
 
-    results[factor] = (sigma_out, frac_out, nads_out)
+    results[factor] = (sigma_out, frac_out, nads_out, nads_lennart_fraction)
 
     # Write per-factor data file
     fname = f"adsorption_Npdosing_x{factor:g}.dat"
     with open(fname, 'w') as f:
         for j in range(n_sampling_points):
-            f.write(f"{sigma_out[j]:5.3e} {frac_out[j]:5.3e} {nads_out[j]:5.3e}\n")
+            f.write(f"{sigma_out[j]:5.3e} {frac_out[j]:5.3e} {nads_out[j]:5.3e} {nads_lennart_fraction[j]:5.3e} \n") 
     print(f"  Written to {fname}")
 
 # Plot adsorbed fraction
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
 for factor in factors:
-    sigma_out, frac_out, nads_out = results[factor]
+    sigma_out, frac_out, nads_out, nads_lennart_fraction = results[factor]
     ax1.plot(sigma_out, frac_out, linestyle='solid', label=f"Npdosing x{factor:g}")
     ax2.plot(sigma_out, nads_out, linestyle='solid', label=f"Npdosing x{factor:g}")
+    ax3.plot(sigma_out, nads_lennart_fraction, linestyle='solid', label=f"Npdosing x{factor:g}")
 
-#ax1.set_xscale('log')
+ax1.plot(sigma_out, frac_out_max, linestyle='--', label=f"Poisson")
+
+ax1.set_xscale('log')
 #ax1.set_yscale('log')
 ax1.set_xlabel(r'Receptor surface density ($\mu$m$^{-2}$)')
-ax1.set_ylabel('Adsorbed fraction (of amount initially in VTzone volume)')
+ax1.set_ylabel('Adsorbed fraction')
 ax1.legend()
 
 ax2.set_xscale('log')
 ax2.set_yscale('log')
 ax2.set_xlabel(r'Receptor surface density ($\mu$m$^{-2}$)')
-ax2.set_ylabel('Total # of adsorbed particles in VTzone volume')
+ax2.set_ylabel('Number of adsorbed particles in SPR volume')
 ax2.legend()
+
+#ax3.set_xscale('log')
+#ax3.set_yscale('log')
+ax3.set_xlabel(r'Receptor surface density ($\mu$m$^{-2}$)')
+ax3.set_ylabel('fraction adsorbed particles (Lennart)')
+ax3.legend()
 
 plt.tight_layout()
 plt.savefig('adsorption_scan_Npdosing.png')
