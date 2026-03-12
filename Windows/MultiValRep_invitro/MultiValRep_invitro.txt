@@ -1,0 +1,137 @@
+import os
+import sys
+import multiprocessing
+from multiprocessing import get_context
+from functools import partial
+from pathlib import Path
+import numpy as np
+from adsorption_invitro import *
+
+def base_dir():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+WORK_DIR = Path(base_dir())
+
+if os.name == 'posix':
+    CONTEXT = 'fork'
+    MAX_WORKERS = multiprocessing.cpu_count()
+
+elif os.name == 'nt':
+    CONTEXT = 'spawn'
+    MAX_WORKERS = min(int(multiprocessing.cpu_count() / 2), 8)
+
+else:
+    raise ValueError(f"Unsupported OS: {os.name}")
+
+mp.dps = 30
+precision = mp.dps
+assert precision >= 30, AssertionError("You need high precision to avoid numerical problem, set to 50")
+
+
+nm = 1.0
+nm2 = nm * nm
+nm3 = nm * nm * nm
+mm = 1e6 * nm
+mm3 = mm ** 3
+L = 1e24 * nm3
+mL = 1e-3 * L
+um = 1.0e3 * nm
+um2 = um * um
+kT = 1.0
+g = 1.0
+
+L = 1e24 * nm3
+M = 6.023e23 / L
+nM = M * 1e-9
+
+
+filename = str(WORK_DIR / 'MultiValR1.csv')
+
+if not Path(filename).exists():
+    raise FileNotFoundError(f"File {filename} does not exist")
+
+with open(filename, 'r') as f:
+    row = [s.strip() for s in f.read().split(',')]
+
+NmonoLong = int(row[0])
+NmonoPEG2k = int(row[1])
+amono = float(row[2])
+PEG2k = float(row[3])
+PEG_max_extension = float(row[4])
+d_NP = float(row[5])
+KD = float(row[6])
+N_ligands = float(row[7])
+ratio = float(row[8])
+NP_conc = float(row[9])
+V_SPR = float(row[10])
+A_SPR = float(row[11])
+npoints = int(row[12])
+int_points = int(row[13])
+
+
+
+amono = amono * nm
+PEG2k = PEG2k * nm
+PEG_max_extension = PEG_max_extension * nm
+KD = KD * nM
+K_bind_0 = KD ** (-1)
+R_NP = d_NP / 2 * nm
+v_bind = np.pi / 3.0 * ( ((R_NP + PEG_max_extension) ** 2 - (R_NP + PEG2k) ** 2) * (R_NP + PEG2k) - 2.0 * R_NP ** 3 * (1.0 - (R_NP + PEG2k) / (R_NP + PEG_max_extension)) )
+
+sigma_L = N_ligands / (4.0 * np.pi * R_NP ** 2)
+sigma_P2K = sigma_L * ratio
+
+#****Data for particles in contact with the receptor containing SPR surface******
+NP_conc = NP_conc / mL #Number of particles in solution in contact with SPR surface per mL [mL-1]
+V_SPR = V_SPR * mL #Volume of particle containing solution in contact with SPR surface [mL]
+A_SPR = A_SPR * um2 #Area of SPR surface [um2]
+
+sigma_R_min = 1.0 / um2
+sigma_R_max = 2e3 / um2
+
+verbose = False
+n_sampling_points = npoints
+
+data_polymers = { "ligands": {"N": NmonoLong, "a": amono, "name": "ligands", "sigma": sigma_L}, "short": {"N": NmonoPEG2k, "a": amono, "name": "PEG2k", "sigma": sigma_P2K}, }
+
+# For the invitro (SPR) case, map to the generic constructor:
+#   A_cell    = A_SPR  (the adsorbing surface area)
+#   cell_conc = 1/V_SPR  (one surface per SPR volume)
+system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_SPR, NP_conc=NP_conc, cell_conc=1.0/V_SPR)
+
+def process_sigma_R(sigma_R, system, K_bind_0, verbose):
+    adsorbed_fraction = system.calculate_bound_fraction(
+        K_bind_0=K_bind_0,
+        sigma_R=sigma_R,
+        fluctuations=True,
+        depletion=True,
+        max_factor=4,
+        verbose=verbose
+    )
+    out1 = float(sigma_R / (1 / um2))  # sigma_R in receptors/um^2
+    out2 = float(adsorbed_fraction)
+    return out1, out2
+
+
+if __name__ == "__main__":
+    # Ensure Windows can spawn workers cleanly when frozen
+    if os.name == "nt":
+        multiprocessing.freeze_support()
+
+    # Output files in the same folder as the executable/script
+    f2_path = WORK_DIR / "MultiValR2.csv"
+
+
+    # Prepare sigma_R range
+    min_exp = np.log10(sigma_R_min)
+    max_exp = np.log10(sigma_R_max)
+    sigma_R_values = np.logspace(min_exp, max_exp, n_sampling_points)
+
+    # Run parallel computation and write outputs
+    with open(f2_path, "w") as f2:
+        with get_context(CONTEXT).Pool(MAX_WORKERS) as pool:
+            process_func = partial(process_sigma_R, system=system, K_bind_0=K_bind_0, verbose=verbose)
+            for out1, out2 in pool.imap(process_func, sigma_R_values):
+                f2.write(f"{out1:5.3e} , {out2:5.3e}\n")

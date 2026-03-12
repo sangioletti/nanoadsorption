@@ -1,0 +1,211 @@
+import os
+import sys
+import multiprocessing
+from multiprocessing import get_context
+from functools import partial
+from pathlib import Path
+import numpy as np
+from adsorption_invitro import *
+
+def base_dir():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+WORK_DIR = Path(base_dir())
+
+if os.name == 'posix':
+    CONTEXT = 'fork'
+    MAX_WORKERS = multiprocessing.cpu_count()
+elif os.name == 'nt':
+    CONTEXT = 'spawn'
+    MAX_WORKERS = min(int(multiprocessing.cpu_count() / 2), 8)
+else:
+    raise ValueError(f"Unsupported OS: {os.name}")
+
+mp.dps = 30
+precision = mp.dps
+
+nm  = 1.0
+nm2 = nm * nm
+nm3 = nm * nm * nm
+mm  = 1e6 * nm
+mm3 = mm ** 3
+L   = 1e24 * nm3
+mL  = 1e-3 * L
+um  = 1.0e3 * nm
+um2 = um * um
+kT  = 1.0
+g   = 1.0
+
+M  = 6.023e23 / L
+nM = M * 1e-9
+
+# ---------------------------------------------------------------------------
+# Read MultiValC1.csv  (15 comma-separated values)
+#
+#  0  NmonoLong         number of monomers in long (ligand) polymer
+#  1  NmonoPEG2k        number of monomers in short PEG2k polymer
+#  2  amono             monomer size [nm]
+#  3  PEG2k             PEG2k rest length [nm]
+#  4  PEG_max_extension maximum PEG extension [nm]
+#  5  d_NP              nanoparticle diameter [nm]
+#  6  KD                dissociation constant [nM]
+#  7  N_ligands         number of ligands per NP
+#  8  ratio             PEG2k / ligand ratio
+#  9  NP_concmax        maximum NP concentration for the sweep [particles/mL]
+# 10  sigma_R           fixed receptor surface density [receptors/um^2]
+# 11  V_SPR             SPR cell volume [mL]
+# 12  A_SPR             SPR surface area [um^2]
+# 13  npoints           number of NP_conc sampling points (log-spaced)
+# 14  int_points        number of integration points for K_bind quadrature
+# ---------------------------------------------------------------------------
+
+filename = str(WORK_DIR / 'MultiValC1.csv')
+
+if not Path(filename).exists():
+    raise FileNotFoundError(f"File {filename} does not exist")
+
+with open(filename, 'r') as f:
+    row = [s.strip() for s in f.read().split(',')]
+
+if len(row) != 15:
+    raise ValueError(
+        f"MultiValC1.csv must contain exactly 15 values, got {len(row)}."
+    )
+
+NmonoLong         = int(row[0])
+NmonoPEG2k        = int(row[1])
+amono             = float(row[2])
+PEG2k             = float(row[3])
+PEG_max_extension = float(row[4])
+d_NP              = float(row[5])
+KD                = float(row[6])
+N_ligands         = float(row[7])
+ratio             = float(row[8])
+NP_concmax        = float(row[9])   # particles / mL  (replaces single NP_conc)
+sigma_R_fixed     = float(row[10])  # receptors / um^2
+V_SPR             = float(row[11])
+A_SPR             = float(row[12])
+npoints           = int(row[13])
+int_points        = int(row[14])
+
+
+# Unit conversions
+amono             = amono * nm
+PEG2k             = PEG2k * nm
+PEG_max_extension = PEG_max_extension * nm
+KD                = KD * nM
+K_bind_0          = KD ** (-1)
+R_NP              = d_NP / 2.0 * nm
+
+v_bind = (np.pi / 3.0
+          * (((R_NP + PEG_max_extension)**2 - (R_NP + PEG2k)**2) * (R_NP + PEG2k)
+             - 2.0 * R_NP**3 * (1.0 - (R_NP + PEG2k) / (R_NP + PEG_max_extension))))
+
+sigma_L   = N_ligands / (4.0 * np.pi * R_NP**2)
+sigma_P2K = sigma_L * ratio
+
+NP_concmax_si = NP_concmax / mL    # internal units [nm^-3]
+V_SPR_si      = V_SPR * mL
+A_SPR_si      = A_SPR * um2
+sigma_R_si    = sigma_R_fixed / um2  # internal units [nm^-2]
+
+verbose           = False
+n_sampling_points = npoints
+
+data_polymers = {
+    "ligands": {"N": NmonoLong,  "a": amono, "name": "ligands", "sigma": sigma_L},
+    "short":   {"N": NmonoPEG2k, "a": amono, "name": "PEG2k",   "sigma": sigma_P2K},
+}
+
+# For the invitro (SPR) case, map to the generic constructor:
+#   A_cell   = A_SPR  (the adsorbing surface area)
+#   cell_conc = 1/V_SPR  (one surface per SPR volume)
+system = MultivalentBinding(
+    kT=kT,
+    R_NP=R_NP,
+    data_polymers=data_polymers,
+    polymer_model="Flory-exact",
+    binding_model="exact",
+    A_cell=A_SPR_si,
+    NP_conc=NP_concmax_si,   # placeholder; overwritten per worker call
+    cell_conc=1.0 / V_SPR_si,
+)
+
+
+def process_NP_conc(NP_conc_i, system, K_bind_0, sigma_R, verbose):
+    """Evaluate adsorbed fraction for one NP concentration value.
+
+    Parameters
+    ----------
+    NP_conc_i : float
+        NP concentration in internal units [nm^-3].
+    system    : MultivalentBinding
+        Lives in a subprocess copy; NP_conc is overwritten safely.
+    K_bind_0  : float
+        Intrinsic (monovalent) binding constant.
+    sigma_R   : float
+        Fixed receptor surface density [nm^-2].
+    verbose   : bool
+    """
+    adsorbed_fraction = system.calculate_bound_fraction(
+        K_bind_0=K_bind_0,
+        sigma_R=sigma_R,
+        fluctuations=True,
+        depletion=True,
+        max_factor=4,
+        NP_conc=NP_conc_i,
+        verbose=verbose,
+    )
+
+    out1 = float(NP_conc_i * mL)   # convert back to particles / mL for output
+    out2 = float(adsorbed_fraction)
+    return out1, out2
+
+
+if __name__ == "__main__":
+    if os.name == "nt":
+        multiprocessing.freeze_support()
+
+    f2_path = WORK_DIR / "MultiValC2.csv"
+
+    # Log-spaced NP concentration sweep from ~0 to NP_concmax.
+    # The lower bound is set to 1 particle/mL (effectively zero on the scale
+    # of NP_concmax) to avoid log(0) while still sampling the dilute limit.
+    NP_conc_min_si = 1.0 / mL         # 1 particle / mL in internal units
+    NP_conc_max_si = NP_concmax_si
+
+    if NP_conc_min_si >= NP_conc_max_si:
+        raise ValueError(
+            f"NP_concmax ({NP_concmax} particles/mL) must be > 1 particle/mL."
+        )
+
+    NP_conc_values = np.logspace(
+        np.log10(NP_conc_min_si),
+        np.log10(NP_conc_max_si),
+        n_sampling_points,
+    )
+
+    print(
+        f"Sweeping NP_conc from 1 to {NP_concmax:.2e} particles/mL "
+        f"({n_sampling_points} log-spaced points)\n"
+        f"Fixed sigma_R = {sigma_R_fixed:.2f} receptors/um^2\n"
+        f"Output -> {f2_path}"
+    )
+
+    with open(f2_path, "w") as f2:
+        with get_context(CONTEXT).Pool(MAX_WORKERS) as pool:
+            process_func = partial(
+                process_NP_conc,
+                system=system,
+                K_bind_0=K_bind_0,
+                sigma_R=sigma_R_si,
+                verbose=verbose,
+            )
+            for out1, out2 in pool.imap(process_func, NP_conc_values):
+                # out1 : NP_conc [particles / mL]
+                # out2 : adsorbed fraction [dimensionless, 0-1]
+                f2.write(f"{out1:5.3e} , {out2:5.3e}\n")
+
+    print("Done.")
