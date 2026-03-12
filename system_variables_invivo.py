@@ -36,9 +36,10 @@ NmonoLigands = Nmonomers( 3400 * g ) # Number of monomers in the PEG to which li
 NmonoShort = Nmonomers( 2000 * g ) # Number of monomers in th short, inert PEG chains
 
 # Define the binding constant for ligand-receptor binding in solution
-KD = 10000.0 * nM # Dissociation constant in solution between ligand-receptor
+KD = 150.0 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
+nonspec_interaction = 0.0 # Strength of nonspecific interaction between whole nanoparticle and surface, in units of kT
 data_polymers = {}
 data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K", 'akuhn' : akuhn }
 data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn }

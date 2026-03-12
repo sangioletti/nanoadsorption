@@ -28,7 +28,8 @@ system = MultivalentBinding( kT=kT, R_NP = R_NP,
                             polymer_model = "gaussian",
                             A_cell = A_cell, 
                             NP_conc = NP_conc, 
-                            cell_conc = cell_conc, )
+                            cell_conc = cell_conc,
+                            nonspec_interaction=nonspec_interaction)
  
 # Store everything in a file, so we can plot it later
 with open( 'adsorption.dat', 'w+' ) as f:
@@ -50,25 +51,21 @@ with open( 'adsorption.dat', 'w+' ) as f:
     print( f"K_bind calculated")
     
     max_NR_ave = int( mp.pi * system.R_NP**2 * sigma_R_max )
-    max_N_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1  # Match formula in calculate_bound_fraction_with_fluctuations
+    max_N_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1
 
     print( f"Max number of receptors to consider: {max_N_receptor}")
 
-    bound_vs_receptor = system.calculate_bound_vs_receptors(
-                                K_bind_0,
-                                max_N_receptor, 
-                                depletion = True, 
-                                verbose = False)
+    K_bind_vs_NR = system.calculate_K_bind_vs_receptors(K_bind_0, max_N_receptor)
+    M_conc_depletion = (A_cell / system.NP_excluded_area) * cell_conc
 
-    
     for i, sigma_R in enumerate(sigma_R_values):
-        #print(f"Step {i}, sigma {sigma_R}")
-        bound_fraction = system.calculate_bound_fraction_with_fluctuations_depletion(
-                                K_bind_0,
-                                sigma_R,
-                                bound_vs_receptor,
-                                verbose = False
-                                )
+        bound_fraction = system.calculate_bound_fraction(
+                                K_bind_0, sigma_R,
+                                fluctuations=True, depletion=True,
+                                K_bind_vs_receptors=K_bind_vs_NR,
+                                NP_conc=NP_conc,
+                                rho_m=M_conc_depletion,
+                                max_n_receptor=max_N_receptor)
 
         # Print the adsorbed fraction
         out1 = float(sigma_R/(1/um2))

@@ -27,7 +27,8 @@ system_ref = MultivalentBinding(kT=kT, R_NP=R_NP,
                                 polymer_model="Flory-exact",
                                 A_cell=A_SPR,
                                 NP_conc=NP_conc,
-                                cell_conc=cell_conc)
+                                cell_conc=cell_conc,
+                                nonspec_interaction=nonspec_interaction)
 
 # Precompute K_bind for each NR once (expensive step, done only once)
 max_NR_ave = int((2 * R_NP)**2 * sigma_R_max)
@@ -51,11 +52,10 @@ for factor in factors:
     nads_lennart_fraction = np.zeros(n_sampling_points)
 
     for i, sigma_R in enumerate(sigma_R_values):
-        bound_fraction = system_ref.calculate_bound_fraction_with_fluctuations_langmuir(
-            K_bind_0,
-            sigma_R,
-            bound_vs_receptor,
-            verbose=False,
+        bound_fraction = system_ref.calculate_bound_fraction(
+            K_bind_0, sigma_R,
+            fluctuations=True, depletion=False,
+            bound_vs_receptor=bound_vs_receptor,
             max_factor=4
         )
 
