@@ -35,4 +35,4 @@ data_polymers = {}
 sigma_L = N_ligands / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
 sigma_P2K = sigma_L * 11.4 
 data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K", 'akuhn' : akuhn }
-data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn }
+data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn, "K_bind_0": K_bind_0 }

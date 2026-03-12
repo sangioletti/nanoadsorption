@@ -34,7 +34,7 @@ system_ref = MultivalentBinding(kT=kT, R_NP=R_NP,
 max_NR_ave = int(mp.pi * R_NP**2 * sigma_R_max)
 max_n_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1 if max_NR_ave > 1 else 50
 print(f"Computing K_bind for NR = 1..{max_n_receptor - 1} (this is the slow step, done only once)")
-K_bind_vs_NR = system_ref.calculate_K_bind_vs_receptors(K_bind_0, max_n_receptor)
+K_bind_vs_NR = system_ref.calculate_K_bind_vs_receptors(max_n_receptor)
 print("K_bind computation done.")
 
 M_conc = (A_cell / (2.0 * R_NP)**2) * cell_conc  # Concentration of binding sites for NPs
@@ -53,7 +53,7 @@ for factor in factors:
 
     for i, sigma_R in enumerate(sigma_R_values):
         bound_fraction = system_ref.calculate_bound_fraction(
-                                K_bind_0, sigma_R,
+                                sigma_R,
                                 fluctuations=True, depletion=True,
                                 K_bind_vs_receptors=K_bind_vs_NR,
                                 max_n_receptor=max_n_receptor,

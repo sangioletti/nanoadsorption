@@ -45,7 +45,6 @@ with open( 'adsorption.dat', 'w+' ) as f:
 
     for i, sigma_R in enumerate(sigma_R_values):
         cached_K_bind[i] = system.calculate_binding_constant(
-                                                         K_bind_0=K_bind_0,
                                                           sigma_R = sigma_R,
                                                           verbose = verbose)
     print( f"K_bind calculated")
@@ -55,12 +54,12 @@ with open( 'adsorption.dat', 'w+' ) as f:
 
     print( f"Max number of receptors to consider: {max_N_receptor}")
 
-    K_bind_vs_NR = system.calculate_K_bind_vs_receptors(K_bind_0, max_N_receptor)
+    K_bind_vs_NR = system.calculate_K_bind_vs_receptors(max_N_receptor)
     M_conc_depletion = (A_cell / system.NP_excluded_area) * cell_conc
 
     for i, sigma_R in enumerate(sigma_R_values):
         bound_fraction = system.calculate_bound_fraction(
-                                K_bind_0, sigma_R,
+                                sigma_R,
                                 fluctuations=True, depletion=True,
                                 K_bind_vs_receptors=K_bind_vs_NR,
                                 NP_conc=NP_conc,

@@ -34,7 +34,7 @@ system_ref = MultivalentBinding(kT=kT, R_NP=R_NP,
 max_NR_ave = int((2 * R_NP)**2 * sigma_R_max)
 max_n_receptor = max_NR_ave + 4 * (max_NR_ave + 1) + 1 if max_NR_ave > 1 else 20
 print(f"Computing K_bind for NR = 1..{max_n_receptor - 1} (this is the slow step, done only once)")
-K_bind_vs_NR = system_ref.calculate_K_bind_vs_receptors(K_bind_0, max_n_receptor)
+K_bind_vs_NR = system_ref.calculate_K_bind_vs_receptors(max_n_receptor)
 print("K_bind computation done.")
 results = {}
 
@@ -43,7 +43,7 @@ for factor in factors:
     label = f"Npdosing x{factor:g}"
     print(f"\n--- {label} (NP_conc = {float(NP_conc_i):.3e} nm^-3) ---")
 
-    bound_vs_receptor = system_ref.calculate_bound_vs_receptors_monodisperse(K_bind_0, max_n_receptor, depletion=False, verbose=False, K_bind_vs_NR=K_bind_vs_NR, NP_conc=NP_conc_i)
+    bound_vs_receptor = system_ref.calculate_bound_vs_receptors_monodisperse(max_n_receptor, depletion=False, verbose=False, K_bind_vs_NR=K_bind_vs_NR, NP_conc=NP_conc_i)
 
     sigma_out = np.zeros(n_sampling_points)
     frac_out = np.zeros(n_sampling_points)
@@ -53,7 +53,7 @@ for factor in factors:
 
     for i, sigma_R in enumerate(sigma_R_values):
         bound_fraction = system_ref.calculate_bound_fraction(
-            K_bind_0, sigma_R,
+            sigma_R,
             fluctuations=True, depletion=False,
             bound_vs_receptor=bound_vs_receptor,
             max_factor=4

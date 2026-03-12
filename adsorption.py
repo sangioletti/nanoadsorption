@@ -9,10 +9,11 @@ import math
 
 class MultivalentBinding:
     def __init__(self, kT, R_NP, data_polymers,
-                 A_cell, NP_conc, cell_conc, 
-                 binding_model = None, 
+                 A_cell, NP_conc, cell_conc,
+                 binding_model = None,
                  polymer_model = "gaussian",
-                 nonspec_interaction = 0.0):
+                 nonspec_interaction = 0.0,
+                 single_receptor = True):
         self.data_polymers = data_polymers
         self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
@@ -20,40 +21,73 @@ class MultivalentBinding:
         self.nm3 = ( self.nm )**3 # Sets the units of volume
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
         self.R_NP = R_NP
-        self.nonspec_K = np.exp( self.kT * nonspec_interaction ) # 0.0 
-        self.polymer_model = polymer_model 
+        self.nonspec_K = np.exp( self.kT * nonspec_interaction ) # 0.0
+        self.polymer_model = polymer_model
         self.binding_model = binding_model
         self.A_cell = A_cell
         self.NP_conc = NP_conc
         self.cell_conc = cell_conc
+        self.single_receptor = single_receptor
 
         # Precompute constant derived quantities
-        self.NP_excluded_area =  ( 2 * R_NP )**2 
+        self.NP_excluded_area =  ( 2 * R_NP )**2
 
-        # Precompute polymer-related constants
-        N_lig = data_polymers["ligands"]["N"]
-        a_lig = data_polymers["ligands"]["a"]
-        a_kuhn = data_polymers["ligands"].get("akuhn", a_lig)
-        self._Ree_ligands = self.r_ee(N_lig, a_lig, a_kuhn)
-        self._r_ee2_ligands = self._Ree_ligands**2
+        # Identify ligand types: polymers with K_bind_0 > 0
+        self._ligand_keys = [k for k, p in data_polymers.items()
+                             if p.get("K_bind_0", 0) > 0]
 
-        if self.polymer_model in ("gaussian", "Flory-approx"):
-            self._klr_prefactor_factor = np.sqrt(6.0 / (np.pi * self._r_ee2_ligands))
-            self._klr_exp_factor = 3.0 / (2.0 * self._r_ee2_ligands)
-            self._klr_lig_steric_factor = 3.0 / (2.0 * self._r_ee2_ligands)
-        elif self.polymer_model == "Flory-exact":
-            a_kuhn_lig = data_polymers["ligands"].get("akuhn", a_lig)
-            R_ee_lig = self.r_ee(N_lig, a_lig, a_kuhn_lig)
-            z_lig, pz_lig, g_lig = self._compute_saw_pz_g(R_ee_lig)
-            self._klr_pz_interp = interp1d(
-                z_lig, pz_lig, kind="linear",
-                bounds_error=False, fill_value=0.0,
-            )
-            self._saw_g_interp = {}
-            self._saw_g_interp[data_polymers["ligands"]["name"]] = interp1d(
-                z_lig, g_lig, kind="linear",
-                bounds_error=False, fill_value=(0.0, 1.0),
-            )
+        # Validate single_receptor consistency
+        if single_receptor:
+            for k in self._ligand_keys:
+                if "sigma_R" in data_polymers[k]:
+                    raise ValueError(
+                        f"single_receptor=True but ligand '{k}' specifies its own sigma_R. "
+                        "Either set single_receptor=False or remove sigma_R from ligand entries.")
+        else:
+            for k in self._ligand_keys:
+                if "sigma_R" not in data_polymers[k]:
+                    raise ValueError(
+                        f"single_receptor=False but ligand '{k}' lacks sigma_R. "
+                        "Each ligand must specify its cognate receptor density.")
+
+        # Precompute K_LR parameters for each ligand type
+        self._ligand_klr_params = {}
+        self._saw_g_interp = {}
+        max_ligand_length = 0.0
+        max_Ree = 0.0
+
+        for key in self._ligand_keys:
+            poly = data_polymers[key]
+            N_lig = poly["N"]
+            a_lig = poly["a"]
+            a_kuhn = poly.get("akuhn", a_lig)
+            R_ee = self.r_ee(N_lig, a_lig, a_kuhn)
+            max_ligand_length = max(max_ligand_length, N_lig * a_lig)
+            if R_ee > max_Ree:
+                max_Ree = R_ee
+
+            if self.polymer_model in ("gaussian", "Flory-approx"):
+                r_ee2 = R_ee**2
+                self._ligand_klr_params[key] = {
+                    "prefactor_factor": np.sqrt(6.0 / (np.pi * r_ee2)),
+                    "exp_factor": 3.0 / (2.0 * r_ee2),
+                    "steric_factor": 3.0 / (2.0 * r_ee2),
+                }
+            elif self.polymer_model == "Flory-exact":
+                z_lig, pz_lig, g_lig = self._compute_saw_pz_g(R_ee)
+                self._ligand_klr_params[key] = {
+                    "pz_interp": interp1d(
+                        z_lig, pz_lig, kind="linear",
+                        bounds_error=False, fill_value=0.0,
+                    ),
+                }
+                self._saw_g_interp[poly["name"]] = interp1d(
+                    z_lig, g_lig, kind="linear",
+                    bounds_error=False, fill_value=(0.0, 1.0),
+                )
+
+        self._max_ligand_length = max_ligand_length
+        self._Ree_ligands = max_Ree
 
         # Precompute steric factors for each polymer type (keyed by "name" field)
         self._polymer_steric_factor = {}
@@ -72,11 +106,13 @@ class MultivalentBinding:
             elif self.polymer_model == "Flory-exact":
                 a_kuhn_p = poly.get("akuhn", a_p)
                 R_ee_p = self.r_ee(N_p, a_p, a_kuhn_p)
-                z_p, pz_p, g_p = self._compute_saw_pz_g(R_ee_p)
-                self._saw_g_interp[poly["name"]] = interp1d(
-                    z_p, g_p, kind="linear",
-                    bounds_error=False, fill_value=(0.0, 1.0),
-                )
+                # Only compute if not already done in ligand loop
+                if poly["name"] not in self._saw_g_interp:
+                    z_p, pz_p, g_p = self._compute_saw_pz_g(R_ee_p)
+                    self._saw_g_interp[poly["name"]] = interp1d(
+                        z_p, g_p, kind="linear",
+                        bounds_error=False, fill_value=(0.0, 1.0),
+                    )
 
     @staticmethod
     def _compute_saw_pz_g(R_ee, n_pts=400, R_max_factor=4.0):
@@ -128,27 +164,25 @@ class MultivalentBinding:
         g_pts = np.minimum(g_pts, 1.0)
         return z_pts, P_z_pts, g_pts
 
-    def K_LR(self, h, K_bind_0):
-        """Area-weighted average bond strength K_LR(h) between a tethered
-        ligand and a fixed-point receptor on parallel surfaces at distance h.
+    def _K_LR_single(self, h, ligand_key):
+        """Area-weighted bond strength K_LR(h) for a single ligand type.
 
-        Uses the CONFINED chain-end distribution P_z(h)/g(h) so that K_LR
-        is self-consistent with the confinement penalty in W_steric.
+        Uses K_bind_0 from data_polymers[ligand_key]["K_bind_0"] and the
+        precomputed K_LR parameters for that ligand.
 
         Gaussian/Flory: K_bind_0 * P_z(h) / erf(h*sqrt(3/(2Na^2))).
-        Rod: K_bind_0 / h  for 0 < h <= L.
-        Cone: K_bind_0 / (h - L*cos(theta_max))  for L*cos(th) < h <= L.
-        FJC: K_bind_0 * P_z(h) / g(h)  from numerically tabulated CDF.
-        Brush (MWC parabolic): K_bind_0 * P_end(h) / g(h).
         Flory-exact: K_bind_0 * P_z(h) / g(h)  from des Cloizeaux SAW."""
+        K_bind_0 = self.data_polymers[ligand_key]["K_bind_0"]
+        params = self._ligand_klr_params[ligand_key]
+
         if self.polymer_model in [ "gaussian", "Flory-approx" ]:
-            g_lig = math.erf(h * math.sqrt(self._klr_lig_steric_factor))
+            g_lig = math.erf(h * math.sqrt(params["steric_factor"]))
             if g_lig < 1e-15:
                 g_lig = 1e-15
-            return K_bind_0 * self._klr_prefactor_factor * np.exp(-h**2 * self._klr_exp_factor) / g_lig
+            return K_bind_0 * params["prefactor_factor"] * np.exp(-h**2 * params["exp_factor"]) / g_lig
         elif self.polymer_model == "Flory-exact":
-            pz = float(self._klr_pz_interp(h))
-            lig_name = self.data_polymers["ligands"]["name"]
+            pz = float(params["pz_interp"](h))
+            lig_name = self.data_polymers[ligand_key]["name"]
             g_lig = float(self._saw_g_interp[lig_name](h))
             if g_lig < 1e-15:
                 g_lig = 1e-15
@@ -192,32 +226,52 @@ class MultivalentBinding:
         
         return p_L, p_R
     
-    def W_bond(self, h, sigma_R, K_bind_0, verbose = False ):
-        """Calculate bonding contribution to free energy per unit area"""
-        a = self.data_polymers["ligands"]["a"]
-        N = self.data_polymers["ligands"]["N"]
-        sigma_L = self.data_polymers["ligands"]["sigma"]
+    def W_bond(self, h, sigma_R=None, verbose = False ):
+        """Calculate bonding contribution to free energy per unit area.
 
-        K = self.K_LR(h, K_bind_0)
-        if K == 0.0 or K * max(sigma_L, sigma_R) < 1e-12:
-            return 0.0
-        p_L, p_R = self.unbinding_probs(sigma_L, sigma_R, K)
+        Sums over all ligand types (independent, non-competing pairs).
+        Each ligand type uses its own K_bind_0, sigma_L, and sigma_R.
 
-        # Free energy calculation per unit area
-        if p_L == 0:
-            W1 = np.inf
-        else:
-            W1 = sigma_L * (mp.log(p_L) + 0.5*(1 - p_L))
+        Parameters:
+            h: surface separation
+            sigma_R: receptor surface density. Used for all ligands when
+                single_receptor=True. Ignored when single_receptor=False
+                (each ligand reads sigma_R from data_polymers).
+            verbose: print diagnostic output
+        """
+        res = 0.0
+        for key in self._ligand_keys:
+            poly = self.data_polymers[key]
+            sigma_L_i = poly["sigma"]
 
-        if p_R == 0:
-            W2 = np.inf
-        else:
-            W2 = sigma_R * (mp.log(p_R) + 0.5*(1 - p_R))
+            if self.single_receptor:
+                sigma_R_i = sigma_R
+            else:
+                sigma_R_i = poly["sigma_R"]
 
-        res = ( W1 + W2 ) * self.kT
-        #print( f'h/Ree {h/np.sqrt(N)*a} R_ee {np.sqrt(N)* a}, Bond energy density: {res}' )
-        if verbose:
-            print( f'Bond energy density: {res}' )
+            if sigma_R_i is None or sigma_R_i == 0:
+                continue
+
+            K_i = self._K_LR_single(h, key)
+            if K_i == 0.0 or K_i * max(sigma_L_i, sigma_R_i) < 1e-12:
+                continue
+
+            p_L, p_R = self.unbinding_probs(sigma_L_i, sigma_R_i, K_i)
+
+            if p_L == 0:
+                W1 = np.inf
+            else:
+                W1 = sigma_L_i * (mp.log(p_L) + 0.5*(1 - p_L))
+
+            if p_R == 0:
+                W2 = np.inf
+            else:
+                W2 = sigma_R_i * (mp.log(p_R) + 0.5*(1 - p_R))
+
+            W_bond_i = ( W1 + W2 ) * self.kT
+            if verbose:
+                print( f'Bond energy density from ligand {key}: {W_bond_i}' )
+            res += W_bond_i
 
         return res
     
@@ -264,47 +318,39 @@ class MultivalentBinding:
             print( f'Steric repulsion from polymer {data["name"]}: {res}' )
         return res
     
-    def W_total(self, h, sigma_R, K_bind_0, verbose = False):
+    def W_total(self, h, sigma_R=None, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        W_bond = self.W_bond(h, sigma_R, K_bind_0, verbose)
+        W_bond = self.W_bond(h, sigma_R, verbose)
         W_steric = self.W_steric( h, verbose)
         if verbose:
             Ree = self._Ree_ligands
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant( self, K_bind_0,
-                                   sigma_R,
-                                   z_max = None, 
+    def calculate_binding_constant( self, sigma_R=None,
+                                   z_max = None,
                                    verbose = False,
                                     ):
 
-            if K_bind_0 == np.inf:
-                return np.inf
-
+            if not self._ligand_keys:
+                return 0.0
 
             R_NP = self.R_NP
-
             Area = self.NP_excluded_area  # Approximate adsorption area of the nanoparticle
+            z_max = self._max_ligand_length
 
             if self.binding_model == "saddle":
-                N_long = self.data_polymers["ligands"]["N"]
-                a = self.data_polymers["ligands"]["a"]
-                z_max = N_long * a
-                #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
                 def force(h):
-                    return 2 * np.pi * R_NP * self.W_total(h, 
-                                                       sigma_R = sigma_R, 
-                                                       K_bind_0 = K_bind_0, 
-                                                       verbose = verbose 
+                    return 2 * np.pi * R_NP * self.W_total(h,
+                                                       sigma_R = sigma_R,
+                                                       verbose = verbose
                                                        )
-        
+
                 # Find equilibrium binding distance where W_total = 0
                 def find_z_bind(h):
-                    return self.W_total(h, 
-                                    sigma_R = sigma_R, 
-                                    K_bind_0 = K_bind_0, 
-                                    verbose = verbose 
+                    return self.W_total(h,
+                                    sigma_R = sigma_R,
+                                    verbose = verbose
                                     )
 
                 R_ee = self._Ree_ligands
@@ -313,48 +359,41 @@ class MultivalentBinding:
                 bounds = [(0.0, z_max)]
                 result = minimize(find_z_bind, initial_guess, bounds=bounds)
                 z_bind = result.x[ 0 ]
-        
+
                 if z_bind > z_max:
                     raise ValueError( f'Equilibrium binding distance is too large z/R_ee: {z_bind/R_ee}' )
 
                 if verbose:
-                    print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )       
-                    print( f'Equilibrium binding distance, normalized to max linear extension: {z_bind / z_max }' )       
+                    print( f'Equilibrium binding distance, normalized to Ree: {z_bind / R_ee }' )
+                    print( f'Equilibrium binding distance, normalized to max linear extension: {z_bind / z_max }' )
 
                 # Calculate the second derivative of A at minimum. This is minus the first derivative of the force
                 dh = 1e-8  # Small step for numerical derivative
                 F_prime = -(force(z_bind + dh) - force(z_bind - dh))/(2*dh)
-                #print( f'Distance minimising plane-plane interaction (z_bind/R_ee): {z_bind/R_ee}' )
-                #print( f'Distance minimising plane-plane interaction (z_bind/z_max): {z_bind/z_max}' )
                 try:
                     assert F_prime >= 0.0, AssertionError( f'Second derivative at minimum: {F_prime} should not be negative' )
                 except:
                     K_bind = np.inf
                     return K_bind
-        
+
                 # Binding constant using saddle point approximation
                 h_grid_saddle = np.linspace(z_bind, z_max, 100)
                 energy_min = np.trapz([force(h) for h in h_grid_saddle], h_grid_saddle)
-        
+
                 if verbose:
                     print( f'Energy minimum: {energy_min}' )
                     print( f'Second derivative at minimum: {F_prime}' )
 
                 K_bind = Area * mp.exp(-energy_min/self.kT) * mp.sqrt(2*mp.pi/(F_prime/self.    kT))
                 return K_bind
-        
-            elif self.binding_model == "exact":
-                #"""Calculate binding constant using Derjaguin approximation"""
-                N_long = self.data_polymers["ligands"]["N"]
-                a = self.data_polymers["ligands"]["a"]
-                z_max = N_long * a
 
+            elif self.binding_model == "exact":
                 # Precompute force on a single grid (instead of 100x100 redundant evaluations)
                 n_grid = 200
                 h_grid = np.linspace(0, z_max, n_grid)
                 force_grid = np.array([
                     float(2 * mp.pi * R_NP * self.W_total(h, sigma_R=sigma_R,
-                                                          K_bind_0=K_bind_0, verbose=verbose))
+                                                          verbose=verbose))
                     for h in h_grid
                 ])
 
@@ -371,17 +410,70 @@ class MultivalentBinding:
 
                 return K_bind * self.nonspec_K
 
-    def calculate_K_bind_vs_receptors(self, K_bind_0, max_N_receptor, verbose=False):
-        """Precompute K_bind for each integer NR from 0 to max_N_receptor-1."""
-        K_bind_vs_NR = np.empty(max_N_receptor, dtype=object)
-        K_bind_vs_NR[0] = 0.0
-        for NR in range(1, max_N_receptor):
-            sigma_R_i = NR / self.NP_excluded_area 
-            K_bind_vs_NR[NR] = self.calculate_binding_constant(K_bind_0, sigma_R_i, verbose=verbose)
-        return K_bind_vs_NR
+    def calculate_K_bind_vs_receptors(self, max_N_receptor, verbose=False):
+        """Precompute K_bind for integer receptor numbers.
+
+        single_receptor=True: returns 1D array K_bind[NR], NR = 0..max_N_receptor-1.
+            All ligands see sigma_R = NR / A_excl.
+
+        single_receptor=False: returns (K_bind_flat, grid_shape, NR_aves) where
+            K_bind_flat is a 1D array over the flattened Cartesian product of
+            receptor numbers for each ligand type.
+            grid_shape is the tuple of axis lengths.
+            NR_aves is a list of average receptor numbers per ligand.
+        """
+        NP_excluded_area = self.NP_excluded_area
+
+        if self.single_receptor:
+            K_bind_vs_NR = np.empty(max_N_receptor, dtype=object)
+            K_bind_vs_NR[0] = 0.0
+            for NR in range(1, max_N_receptor):
+                sigma_R_i = NR / NP_excluded_area
+                K_bind_vs_NR[NR] = self.calculate_binding_constant(
+                    sigma_R=sigma_R_i, verbose=verbose)
+            return K_bind_vs_NR
+
+        else:
+            # Multi-receptor: build grid over independent receptor types
+            import itertools
+            n_lig = len(self._ligand_keys)
+            # Determine max NR for each receptor type
+            axes = []
+            NR_aves = []
+            for key in self._ligand_keys:
+                sigma_R_k = self.data_polymers[key]["sigma_R"]
+                NR_ave_k = NP_excluded_area * sigma_R_k
+                NR_aves.append(NR_ave_k)
+                max_NR_k = min(max_N_receptor,
+                               int(NR_ave_k) + 4 * (int(NR_ave_k) + 1) + 1)
+                axes.append(range(max_NR_k))
+
+            grid_shape = tuple(len(ax) for ax in axes)
+            total_points = 1
+            for s in grid_shape:
+                total_points *= s
+
+            K_bind_flat = np.empty(total_points, dtype=object)
+            for idx, combo in enumerate(itertools.product(*axes)):
+                # combo = (NR_1, NR_2, ...) for each ligand type
+                # Build sigma_R for each ligand from its NR
+                if all(nr == 0 for nr in combo):
+                    K_bind_flat[idx] = 0.0
+                    continue
+                # Temporarily set sigma_R in data_polymers for this evaluation
+                saved = {}
+                for i, key in enumerate(self._ligand_keys):
+                    saved[key] = self.data_polymers[key].get("sigma_R")
+                    self.data_polymers[key]["sigma_R"] = combo[i] / NP_excluded_area
+                K_bind_flat[idx] = self.calculate_binding_constant(verbose=verbose)
+                # Restore
+                for key in self._ligand_keys:
+                    if saved[key] is not None:
+                        self.data_polymers[key]["sigma_R"] = saved[key]
+
+            return K_bind_flat, grid_shape, NR_aves
 
     def calculate_bound_vs_receptors_monodisperse(self,
-                                K_bind_0,
                                 max_N_receptor,
                                 depletion:bool = True,
                                 verbose:bool = False,
@@ -389,6 +481,7 @@ class MultivalentBinding:
                                 NP_conc=None):
         """Calculate fraction of nanoparticles bound for each integer NR.
 
+        Only supported for single_receptor=True.
         If K_bind_vs_NR is provided, use pre-computed K_bind values instead of
         recomputing them. If NP_conc is provided, override self.NP_conc."""
         A_cell = self.A_cell
@@ -405,7 +498,7 @@ class MultivalentBinding:
                     K_bind = K_bind_vs_NR[NR]
                 else:
                     sigma_R_i = NR / NP_excluded_area
-                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                    K_bind = self.calculate_binding_constant( sigma_R_i )
                 if K_bind == np.inf:
                     bound_vs_receptor[NR] = M_conc / NP_conc
                 else:
@@ -421,7 +514,7 @@ class MultivalentBinding:
                     K_bind = K_bind_vs_NR[NR]
                 else:
                     sigma_R_i = NR / NP_excluded_area
-                    K_bind = self.calculate_binding_constant( K_bind_0, sigma_R_i )
+                    K_bind = self.calculate_binding_constant( sigma_R_i )
 
                 if K_bind == np.inf:
                     bound_vs_receptor[NR] = 1.0
@@ -431,7 +524,7 @@ class MultivalentBinding:
         return bound_vs_receptor
     
     
-    def calculate_bound_fraction(self, K_bind_0, sigma_R,
+    def calculate_bound_fraction(self, sigma_R=None,
                                  fluctuations=False, depletion=True,
                                  bound_vs_receptor=None,
                                  K_bind_vs_receptors=None,
@@ -441,13 +534,13 @@ class MultivalentBinding:
         """Calculate the fraction of nanoparticles bound to the cell surface.
 
         Parameters:
-            K_bind_0: intrinsic single ligand-receptor binding constant
-            sigma_R: receptor surface density
+            sigma_R: receptor surface density. Required when single_receptor=True.
+                Ignored when single_receptor=False (each ligand has its own sigma_R).
             fluctuations: if True, Poisson-average over receptor number fluctuations
             depletion: if True, account for NP depletion; if False, Langmuir (infinite bulk)
             bound_vs_receptor: precomputed bound fractions per NR
-                (required when fluctuations=True, depletion=False)
-            K_bind_vs_receptors: precomputed K_bind per NR
+                (required when fluctuations=True, depletion=False, single_receptor=True)
+            K_bind_vs_receptors: precomputed K_bind array
                 (required when fluctuations=True, depletion=True;
                  computed automatically if not provided)
             verbose: print diagnostic output
@@ -461,7 +554,7 @@ class MultivalentBinding:
 
         if not fluctuations:
             # --- Monodisperse: no Poisson averaging over receptor numbers ---
-            K_bind = self.calculate_binding_constant(K_bind_0, sigma_R)
+            K_bind = self.calculate_binding_constant(sigma_R)
 
             if depletion:
                 M_conc = (self.A_cell / NP_excluded_area) * self.cell_conc
@@ -481,37 +574,92 @@ class MultivalentBinding:
                 return NP_conc * K_bind / (1 + NP_conc * K_bind)
 
         else:
-            NR_ave = NP_excluded_area * sigma_R
+            # --- Fluctuations: Poisson-average over receptor numbers ---
+            if self.single_receptor:
+                NR_ave = NP_excluded_area * sigma_R
 
-            if not depletion:
-                # --- Langmuir with Poisson fluctuations ---
-                assert bound_vs_receptor is not None, \
-                    "bound_vs_receptor required when fluctuations=True, depletion=False"
-                if verbose:
-                    print(f"NR_ave: {NR_ave}, sigma_R: {sigma_R}")
+                if not depletion:
+                    # Langmuir with Poisson fluctuations
+                    assert bound_vs_receptor is not None, \
+                        "bound_vs_receptor required when fluctuations=True, depletion=False"
+                    if verbose:
+                        print(f"NR_ave: {NR_ave}, sigma_R: {sigma_R}")
 
-                int_NR_ave = int(NR_ave)
-                max_NR = int_NR_ave + max_factor * (int_NR_ave + 1) if int_NR_ave > 1 else 20
-                if verbose:
-                    print(f"Max NR required: {max_NR}, precomputed: {len(bound_vs_receptor)}")
-                assert len(bound_vs_receptor) >= max_NR
+                    int_NR_ave = int(NR_ave)
+                    max_NR = int_NR_ave + max_factor * (int_NR_ave + 1) if int_NR_ave > 1 else 20
+                    if verbose:
+                        print(f"Max NR required: {max_NR}, precomputed: {len(bound_vs_receptor)}")
+                    assert len(bound_vs_receptor) >= max_NR
 
-                poisson = np.zeros(max_NR)
-                exp_neg_avg = mp.exp(-NR_ave)
-                for NR in range(1, max_NR):
-                    poisson[NR] = poisson_distribution(NR, NR_ave, exp_neg_avg)
+                    poisson = np.zeros(max_NR)
+                    exp_neg_avg = mp.exp(-NR_ave)
+                    for NR in range(1, max_NR):
+                        poisson[NR] = poisson_distribution(NR, NR_ave, exp_neg_avg)
 
-                return min(1, np.sum(bound_vs_receptor[:len(poisson)] * poisson))
+                    return min(1, np.sum(bound_vs_receptor[:len(poisson)] * poisson))
+
+                else:
+                    # Self-consistent solve with Poisson fluctuations and depletion
+                    if K_bind_vs_receptors is None:
+                        K_bind_vs_receptors = self.calculate_K_bind_vs_receptors(
+                            max_n_receptor)
+
+                    rho_i, K_i, bound_fraction = self.self_consistent_rho(
+                        K_bind_vs_receptors, rho_m, NP_conc, NR_ave)
+                    return bound_fraction
 
             else:
-                # --- Self-consistent solve with Poisson fluctuations and depletion ---
+                # Multi-receptor: independent Poisson for each receptor type
+                import itertools
+
                 if K_bind_vs_receptors is None:
                     K_bind_vs_receptors = self.calculate_K_bind_vs_receptors(
-                        K_bind_0, max_n_receptor)
+                        max_n_receptor)
 
-                rho_i, K_i, bound_fraction = self.self_consistent_rho(
-                    K_bind_vs_receptors, rho_m, NP_conc, NR_ave)
-                return bound_fraction
+                K_bind_flat, grid_shape, NR_aves = K_bind_vs_receptors
+
+                # Build flattened Poisson weight array (product of independent Poissons)
+                n_lig = len(self._ligand_keys)
+                axes_poisson = []
+                for i in range(n_lig):
+                    NR_ave_i = NR_aves[i]
+                    n_i = grid_shape[i]
+                    exp_neg = mp.exp(-NR_ave_i)
+                    poisson_i = np.array([float(poisson_distribution(k, NR_ave_i, exp_neg))
+                                          for k in range(n_i)])
+                    axes_poisson.append(poisson_i)
+
+                # Compute product of marginals for each grid point
+                total_points = len(K_bind_flat)
+                poisson_flat = np.ones(total_points)
+                for idx, combo in enumerate(itertools.product(
+                        *[range(s) for s in grid_shape])):
+                    weight = 1.0
+                    for i, nr_i in enumerate(combo):
+                        weight *= axes_poisson[i][nr_i]
+                    poisson_flat[idx] = weight
+
+                if depletion:
+                    # Use self_consistent_rho with flattened arrays
+                    if rho_m is None:
+                        rho_m = (self.A_cell / NP_excluded_area) * self.cell_conc
+                    rho_m_flat = poisson_flat * rho_m
+                    rho_i, K_i, bound_fraction = self.self_consistent_rho_flat(
+                        K_bind_flat, rho_m_flat, NP_conc)
+                    return bound_fraction
+                else:
+                    # Langmuir with multi-receptor Poisson fluctuations
+                    result = 0.0
+                    for idx in range(total_points):
+                        K = float(K_bind_flat[idx])
+                        if K == 0:
+                            continue
+                        if K == np.inf:
+                            bf_i = 1.0
+                        else:
+                            bf_i = NP_conc * K / (1 + NP_conc * K)
+                        result += poisson_flat[idx] * bf_i
+                    return min(1.0, result)
 
     def self_consistent_rho( self, K_i, rho_m_tot, NP_conc, NR_ave, tol=1e-16, max_iter=2000 ):
         n = len( K_i )
@@ -567,7 +715,45 @@ class MultivalentBinding:
         #print( f"Self consistent solve finished, cycle {n_cycle}, free NP frac = {c/NP_conc:.6e}" )
         return (rho, K_i, bound_fraction)
 
+    def self_consistent_rho_flat(self, K_i, rho_m, NP_conc, tol=1e-16, max_iter=2000):
+        """Self-consistent solve with pre-built rho_m array (for multi-receptor case).
 
+        Same Newton/bisection solver as self_consistent_rho, but rho_m is
+        provided directly (already weighted by Poisson products) rather than
+        being computed internally from NR_ave."""
+        n = len(K_i)
+        K = np.array([float(K_i[i]) for i in range(n)])
+        rho_m_arr = np.array([float(rho_m[i]) for i in range(n)])
+
+        Km = K * rho_m_arr
+
+        def g_and_gprime(c):
+            denom = 1.0 + K * c
+            g  = NP_conc - c - np.sum(Km * c / denom)
+            gp = -1.0 - np.sum(Km / denom**2)
+            return g, gp
+
+        c_lo, c_hi = 0.0, float(NP_conc)
+        c = 0.5 * c_hi
+
+        for n_cycle in range(max_iter):
+            g_val, gp_val = g_and_gprime(c)
+            if g_val > 0:
+                c_lo = c
+            else:
+                c_hi = c
+            c_new = c - g_val / gp_val
+            if c_new <= c_lo or c_new >= c_hi:
+                c_new = 0.5 * (c_lo + c_hi)
+            if abs(c_new - c) < tol * float(NP_conc):
+                c = c_new
+                break
+            c = c_new
+
+        denom = 1.0 + K * c
+        rho = Km * c / denom
+        bound_fraction = 1.0 - c / float(NP_conc)
+        return (rho, K_i, bound_fraction)
 
 
 def poisson_distribution( k, average_k, exp_neg_avg=None ):
