@@ -30,7 +30,9 @@ print(f"NmonoShort: {NmonoShort}")
 KD = 150 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
-nonspec_interaction = 0.0 # Strength of nonspecific interaction between whole nanoparticle and surface, in units of kT
+nonspec_interaction = 0.0 * kT # Strength of nonspecific interaction between whole nanoparticle and surface, in units of kT
+binder_linear_size = 0 * nm # Linear size of the binder, in this case, an antibody
+
 data_polymers = {}
 sigma_L = N_ligands / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
 sigma_P2K = sigma_L * 11.4 

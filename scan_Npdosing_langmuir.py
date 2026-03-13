@@ -28,7 +28,8 @@ system_ref = MultivalentBinding(kT=kT, R_NP=R_NP,
                                 A_cell=A_SPR,
                                 NP_conc=NP_conc,
                                 cell_conc=cell_conc,
-                                nonspec_interaction=nonspec_interaction)
+                                nonspec_interaction=nonspec_interaction,
+                                binder_linear_size=binder_linear_size)
 
 # Precompute K_bind for each NR once (expensive step, done only once)
 max_NR_ave = int((2 * R_NP)**2 * sigma_R_max)

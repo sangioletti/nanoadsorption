@@ -12,7 +12,8 @@ class MultivalentBinding:
                  A_cell, NP_conc, cell_conc, 
                  binding_model = None, 
                  polymer_model = "gaussian",
-                 nonspec_interaction = 0.0):
+                 nonspec_interaction = 0.0,
+                 binder_linear_size = 0.0):
         self.data_polymers = data_polymers
         self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
@@ -20,7 +21,8 @@ class MultivalentBinding:
         self.nm3 = ( self.nm )**3 # Sets the units of volume
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
         self.R_NP = R_NP
-        self.nonspec_K = np.exp( self.kT * nonspec_interaction ) # 0.0 
+        self.nonspec_K = np.exp( -nonspec_interaction ) # 0.0
+        self.binder_linear_size = binder_linear_size
         self.polymer_model = polymer_model 
         self.binding_model = binding_model
         self.A_cell = A_cell
@@ -228,6 +230,9 @@ class MultivalentBinding:
 
         res = 0.0
         for polymer in self.data_polymers.values():
+            # Add the linear size of the binder to the distance
+            if self.binder_linear_size:
+                h += self.binder_linear_size
             res += self.W_polymer( h, polymer, verbose = verbose )
         return res
     

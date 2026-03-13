@@ -29,7 +29,8 @@ system = MultivalentBinding( kT=kT, R_NP = R_NP,
                             A_cell = A_cell, 
                             NP_conc = NP_conc, 
                             cell_conc = cell_conc,
-                            nonspec_interaction=nonspec_interaction)
+                            nonspec_interaction=nonspec_interaction,
+                            binder_linear_size=binder_linear_size)
  
 # Store everything in a file, so we can plot it later
 with open( 'adsorption.dat', 'w+' ) as f:
