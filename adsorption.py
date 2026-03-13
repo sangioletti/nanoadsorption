@@ -661,7 +661,7 @@ class MultivalentBinding:
                         result += poisson_flat[idx] * bf_i
                     if result > 1.0:
                         raise ValueError(f"result: {result} is greater than 1.0")
-                    return min(1.0, result)
+                    return result
 
     def self_consistent_rho( self, K_i, rho_m_tot, NP_conc, NR_ave, tol=1e-16, max_iter=2000 ):
         n = len( K_i )
