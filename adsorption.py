@@ -12,8 +12,7 @@ class MultivalentBinding:
                  A_cell, NP_conc, cell_conc,
                  binding_model = None,
                  polymer_model = "gaussian",
-                 nonspec_interaction = 0.0,
-                 single_receptor = True):
+                 nonspec_interaction = 0.0):
         self.data_polymers = data_polymers
         self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
@@ -27,28 +26,45 @@ class MultivalentBinding:
         self.A_cell = A_cell
         self.NP_conc = NP_conc
         self.cell_conc = cell_conc
-        self.single_receptor = single_receptor
 
         # Precompute constant derived quantities
         self.NP_excluded_area =  ( 2 * R_NP )**2
 
-        # Identify ligand types: polymers with K_bind_0 > 0
+        # Identify ligand types: polymers with a "receptor" dict AND K_bind_0 > 0.
+        # Polymers without "receptor" are inert (steric-only), regardless of K_bind_0.
         self._ligand_keys = [k for k, p in data_polymers.items()
-                             if p.get("K_bind_0", 0) > 0]
+                             if "receptor" in p and p.get("K_bind_0", 0) > 0]
 
-        # Validate single_receptor consistency
-        if single_receptor:
-            for k in self._ligand_keys:
-                if "sigma_R" in data_polymers[k]:
+        # Build receptor type mapping.
+        # Ligands sharing the same receptor name share Poisson fluctuations.
+        # sigma_R is always read live from the receptor dict (not cached),
+        # so sweeps just modify the dict before calling calculation methods.
+        # _receptor_types: ordered list of unique receptor names
+        # _receptor_groups: receptor_name -> [ligand_key, ...]
+        # _receptor_dicts: receptor_name -> receptor dict reference
+        from collections import OrderedDict
+        groups = OrderedDict()
+        receptor_dicts = {}
+        for k in self._ligand_keys:
+            rec = data_polymers[k]["receptor"]
+            rec_name = rec["name"]
+            if rec_name not in groups:
+                groups[rec_name] = []
+                receptor_dicts[rec_name] = rec
+            else:
+                # Validate that ligands sharing a receptor name point to the
+                # same dict object, to avoid accidental inconsistencies.
+                if rec is not receptor_dicts[rec_name]:
                     raise ValueError(
-                        f"single_receptor=True but ligand '{k}' specifies its own sigma_R. "
-                        "Either set single_receptor=False or remove sigma_R from ligand entries.")
-        else:
-            for k in self._ligand_keys:
-                if "sigma_R" not in data_polymers[k]:
-                    raise ValueError(
-                        f"single_receptor=False but ligand '{k}' lacks sigma_R. "
-                        "Each ligand must specify its cognate receptor density.")
+                        f"Ligand '{k}' has a different receptor dict object for "
+                        f"receptor '{rec_name}'. Ligands sharing a receptor must "
+                        "reference the same dict object so that sigma_R stays "
+                        "consistent when modified.")
+            groups[rec_name].append(k)
+
+        self._receptor_types = list(groups.keys())
+        self._receptor_groups = dict(groups)
+        self._receptor_dicts = receptor_dicts
 
         # Precompute K_LR parameters for each ligand type
         self._ligand_klr_params = {}
@@ -226,28 +242,23 @@ class MultivalentBinding:
         
         return p_L, p_R
     
-    def W_bond(self, h, sigma_R=None, verbose = False ):
+    def _get_sigma_R_for_ligand(self, ligand_key):
+        """Read sigma_R for a ligand from its receptor dict (live, not cached)."""
+        rec = self.data_polymers[ligand_key]["receptor"]
+        return rec.get("sigma_R", None)
+
+    def W_bond(self, h, verbose = False ):
         """Calculate bonding contribution to free energy per unit area.
 
         Sums over all ligand types (independent, non-competing pairs).
         Each ligand type uses its own K_bind_0, sigma_L, and sigma_R.
-
-        Parameters:
-            h: surface separation
-            sigma_R: receptor surface density. Used for all ligands when
-                single_receptor=True. Ignored when single_receptor=False
-                (each ligand reads sigma_R from data_polymers).
-            verbose: print diagnostic output
+        sigma_R is read live from each ligand's receptor dict.
         """
         res = 0.0
         for key in self._ligand_keys:
             poly = self.data_polymers[key]
             sigma_L_i = poly["sigma"]
-
-            if self.single_receptor:
-                sigma_R_i = sigma_R
-            else:
-                sigma_R_i = poly["sigma_R"]
+            sigma_R_i = self._get_sigma_R_for_ligand(key)
 
             if sigma_R_i is None or sigma_R_i == 0:
                 continue
@@ -318,16 +329,16 @@ class MultivalentBinding:
             print( f'Steric repulsion from polymer {data["name"]}: {res}' )
         return res
     
-    def W_total(self, h, sigma_R=None, verbose = False):
+    def W_total(self, h, verbose = False):
         """Calculate total interaction free energy per unit area"""
-        W_bond = self.W_bond(h, sigma_R, verbose)
+        W_bond = self.W_bond(h, verbose)
         W_steric = self.W_steric( h, verbose)
         if verbose:
             Ree = self._Ree_ligands
             print( f'h/Ree {h/Ree} W_bond: {W_bond}, W_steric: {W_steric}' )
         return W_bond + W_steric
     
-    def calculate_binding_constant( self, sigma_R=None,
+    def calculate_binding_constant( self,
                                    z_max = None,
                                    verbose = False,
                                     ):
@@ -342,14 +353,12 @@ class MultivalentBinding:
             if self.binding_model == "saddle":
                 def force(h):
                     return 2 * np.pi * R_NP * self.W_total(h,
-                                                       sigma_R = sigma_R,
                                                        verbose = verbose
                                                        )
 
                 # Find equilibrium binding distance where W_total = 0
                 def find_z_bind(h):
                     return self.W_total(h,
-                                    sigma_R = sigma_R,
                                     verbose = verbose
                                     )
 
@@ -392,8 +401,7 @@ class MultivalentBinding:
                 n_grid = 200
                 h_grid = np.linspace(0, z_max, n_grid)
                 force_grid = np.array([
-                    float(2 * mp.pi * R_NP * self.W_total(h, sigma_R=sigma_R,
-                                                          verbose=verbose))
+                    float(2 * mp.pi * R_NP * self.W_total(h, verbose=verbose))
                     for h in h_grid
                 ])
 
@@ -413,65 +421,90 @@ class MultivalentBinding:
     def calculate_K_bind_vs_receptors(self, max_N_receptor, verbose=False):
         """Precompute K_bind for integer receptor numbers.
 
-        single_receptor=True: returns 1D array K_bind[NR], NR = 0..max_N_receptor-1.
-            All ligands see sigma_R = NR / A_excl.
+        One axis per unique receptor type. Temporarily sets sigma_R in each
+        receptor dict for each grid point, then restores the original values.
 
-        single_receptor=False: returns (K_bind_flat, grid_shape, NR_aves) where
-            K_bind_flat is a 1D array over the flattened Cartesian product of
-            receptor numbers for each ligand type.
-            grid_shape is the tuple of axis lengths.
-            NR_aves is a list of average receptor numbers per ligand.
+        Returns:
+          - If single receptor type: 1D array K_bind[NR].
+          - If multiple receptor types: (K_bind_flat, grid_shape, NR_aves, receptor_names)
+
+        Parameters:
+            max_N_receptor: maximum receptor count per axis
         """
+        import itertools
         NP_excluded_area = self.NP_excluded_area
+        n_rec = len(self._receptor_types)
 
-        if self.single_receptor:
-            K_bind_vs_NR = np.empty(max_N_receptor, dtype=object)
+        if n_rec == 1:
+            # Single receptor type: return simple 1D array
+            rec_name = self._receptor_types[0]
+            rec_dict = self._receptor_dicts[rec_name]
+            saved_sigma_R = rec_dict.get("sigma_R", None)
+
+            # Determine axis size from current sigma_R if available
+            if saved_sigma_R is not None:
+                NR_ave = NP_excluded_area * saved_sigma_R
+                n_pts = min(max_N_receptor,
+                            int(NR_ave) + 4 * (int(NR_ave) + 1) + 1)
+                n_pts = max(n_pts, 2)
+            else:
+                n_pts = max_N_receptor
+
+            K_bind_vs_NR = np.empty(n_pts, dtype=object)
             K_bind_vs_NR[0] = 0.0
-            for NR in range(1, max_N_receptor):
-                sigma_R_i = NR / NP_excluded_area
+            for NR in range(1, n_pts):
+                rec_dict["sigma_R"] = NR / NP_excluded_area
                 K_bind_vs_NR[NR] = self.calculate_binding_constant(
-                    sigma_R=sigma_R_i, verbose=verbose)
+                    verbose=verbose)
+
+            # Restore original sigma_R
+            if saved_sigma_R is not None:
+                rec_dict["sigma_R"] = saved_sigma_R
+            else:
+                rec_dict.pop("sigma_R", None)
             return K_bind_vs_NR
 
-        else:
-            # Multi-receptor: build grid over independent receptor types
-            import itertools
-            n_lig = len(self._ligand_keys)
-            # Determine max NR for each receptor type
-            axes = []
-            NR_aves = []
-            for key in self._ligand_keys:
-                sigma_R_k = self.data_polymers[key]["sigma_R"]
-                NR_ave_k = NP_excluded_area * sigma_R_k
-                NR_aves.append(NR_ave_k)
-                max_NR_k = min(max_N_receptor,
-                               int(NR_ave_k) + 4 * (int(NR_ave_k) + 1) + 1)
-                axes.append(range(max_NR_k))
+        # Multiple receptor types: build one axis per receptor type
+        axes = []
+        NR_aves = []
+        saved_sigma_Rs = {}
+        for rec_name in self._receptor_types:
+            rec_dict = self._receptor_dicts[rec_name]
+            sR = rec_dict.get("sigma_R", None)
+            saved_sigma_Rs[rec_name] = sR
+            if sR is None:
+                raise ValueError(
+                    f"Receptor type '{rec_name}' has no sigma_R set in its "
+                    "receptor dict. Set it before calling this method.")
+            NR_ave = NP_excluded_area * sR
+            NR_aves.append(NR_ave)
+            max_NR = min(max_N_receptor,
+                         int(NR_ave) + 4 * (int(NR_ave) + 1) + 1)
+            max_NR = max(max_NR, 2)
+            axes.append(range(max_NR))
 
-            grid_shape = tuple(len(ax) for ax in axes)
-            total_points = 1
-            for s in grid_shape:
-                total_points *= s
+        # Build multi-dimensional grid
+        grid_shape = tuple(len(ax) for ax in axes)
+        total_points = 1
+        for s in grid_shape:
+            total_points *= s
 
-            K_bind_flat = np.empty(total_points, dtype=object)
-            for idx, combo in enumerate(itertools.product(*axes)):
-                # combo = (NR_1, NR_2, ...) for each ligand type
-                # Build sigma_R for each ligand from its NR
-                if all(nr == 0 for nr in combo):
-                    K_bind_flat[idx] = 0.0
-                    continue
-                # Temporarily set sigma_R in data_polymers for this evaluation
-                saved = {}
-                for i, key in enumerate(self._ligand_keys):
-                    saved[key] = self.data_polymers[key].get("sigma_R")
-                    self.data_polymers[key]["sigma_R"] = combo[i] / NP_excluded_area
-                K_bind_flat[idx] = self.calculate_binding_constant(verbose=verbose)
-                # Restore
-                for key in self._ligand_keys:
-                    if saved[key] is not None:
-                        self.data_polymers[key]["sigma_R"] = saved[key]
+        K_bind_flat = np.empty(total_points, dtype=object)
+        for idx, combo in enumerate(itertools.product(*axes)):
+            if all(nr == 0 for nr in combo):
+                K_bind_flat[idx] = 0.0
+                continue
+            # Set sigma_R in each receptor dict
+            for i, rec_name in enumerate(self._receptor_types):
+                self._receptor_dicts[rec_name]["sigma_R"] = combo[i] / NP_excluded_area
+            K_bind_flat[idx] = self.calculate_binding_constant(verbose=verbose)
 
-            return K_bind_flat, grid_shape, NR_aves
+        # Restore original sigma_R values
+        for rec_name in self._receptor_types:
+            if saved_sigma_Rs[rec_name] is not None:
+                self._receptor_dicts[rec_name]["sigma_R"] = saved_sigma_Rs[rec_name]
+
+        return K_bind_flat, grid_shape, NR_aves, self._receptor_types
 
     def calculate_bound_vs_receptors_monodisperse(self,
                                 max_N_receptor,
@@ -481,7 +514,7 @@ class MultivalentBinding:
                                 NP_conc=None):
         """Calculate fraction of nanoparticles bound for each integer NR.
 
-        Only supported for single_receptor=True.
+        Only supported for systems with a single receptor type.
         If K_bind_vs_NR is provided, use pre-computed K_bind values instead of
         recomputing them. If NP_conc is provided, override self.NP_conc."""
         A_cell = self.A_cell
@@ -492,13 +525,18 @@ class MultivalentBinding:
         bound_vs_receptor = np.zeros( max_N_receptor )
 
 
+        # For recomputation, temporarily set sigma_R in the receptor dict
+        rec_name = self._receptor_types[0]
+        rec_dict = self._receptor_dicts[rec_name]
+        saved_sigma_R = rec_dict.get("sigma_R", None)
+
         if depletion:
             for NR in range( 1, max_N_receptor ):
                 if K_bind_vs_NR is not None:
                     K_bind = K_bind_vs_NR[NR]
                 else:
-                    sigma_R_i = NR / NP_excluded_area
-                    K_bind = self.calculate_binding_constant( sigma_R_i )
+                    rec_dict["sigma_R"] = NR / NP_excluded_area
+                    K_bind = self.calculate_binding_constant()
                 if K_bind == np.inf:
                     bound_vs_receptor[NR] = M_conc / NP_conc
                 else:
@@ -513,18 +551,24 @@ class MultivalentBinding:
                 if K_bind_vs_NR is not None:
                     K_bind = K_bind_vs_NR[NR]
                 else:
-                    sigma_R_i = NR / NP_excluded_area
-                    K_bind = self.calculate_binding_constant( sigma_R_i )
+                    rec_dict["sigma_R"] = NR / NP_excluded_area
+                    K_bind = self.calculate_binding_constant()
 
                 if K_bind == np.inf:
                     bound_vs_receptor[NR] = 1.0
                 else:
                     bound_vs_receptor[NR] = NP_conc * K_bind / (1 + NP_conc * K_bind )
 
+        # Restore original sigma_R
+        if saved_sigma_R is not None:
+            rec_dict["sigma_R"] = saved_sigma_R
+        else:
+            rec_dict.pop("sigma_R", None)
+
         return bound_vs_receptor
     
     
-    def calculate_bound_fraction(self, sigma_R=None,
+    def calculate_bound_fraction(self,
                                  fluctuations=False, depletion=True,
                                  bound_vs_receptor=None,
                                  K_bind_vs_receptors=None,
@@ -533,28 +577,27 @@ class MultivalentBinding:
                                  NP_conc=None, rho_m=None):
         """Calculate the fraction of nanoparticles bound to the cell surface.
 
+        sigma_R is read from each ligand's receptor dict (set it before calling).
+
         Parameters:
-            sigma_R: receptor surface density. Required when single_receptor=True.
-                Ignored when single_receptor=False (each ligand has its own sigma_R).
             fluctuations: if True, Poisson-average over receptor number fluctuations
             depletion: if True, account for NP depletion; if False, Langmuir (infinite bulk)
             bound_vs_receptor: precomputed bound fractions per NR
-                (required when fluctuations=True, depletion=False, single_receptor=True)
-            K_bind_vs_receptors: precomputed K_bind array
-                (required when fluctuations=True, depletion=True;
-                 computed automatically if not provided)
+                (only for single-receptor-type, fluctuations=True, depletion=False)
+            K_bind_vs_receptors: precomputed K_bind array from calculate_K_bind_vs_receptors
             verbose: print diagnostic output
-            max_factor: controls Poisson truncation (fluctuations=True, depletion=False)
-            max_n_receptor: max NR for K_bind precomputation
+            max_factor: controls Poisson truncation
+            max_n_receptor: max NR per receptor type for K_bind precomputation
             NP_conc: override self.NP_conc
             rho_m: total binding site concentration (fluctuations=True, depletion=True)
         """
         NP_conc = NP_conc if NP_conc is not None else self.NP_conc
         NP_excluded_area = self.NP_excluded_area
+        n_rec = len(self._receptor_types)
 
         if not fluctuations:
             # --- Monodisperse: no Poisson averaging over receptor numbers ---
-            K_bind = self.calculate_binding_constant(sigma_R)
+            K_bind = self.calculate_binding_constant()
 
             if depletion:
                 M_conc = (self.A_cell / NP_excluded_area) * self.cell_conc
@@ -575,15 +618,25 @@ class MultivalentBinding:
 
         else:
             # --- Fluctuations: Poisson-average over receptor numbers ---
-            if self.single_receptor:
-                NR_ave = NP_excluded_area * sigma_R
+            import itertools
+
+            if n_rec == 1:
+                # Single receptor type: efficient 1D path
+                rec_name = self._receptor_types[0]
+                rec_dict = self._receptor_dicts[rec_name]
+                sR = rec_dict.get("sigma_R", None)
+                if sR is None:
+                    raise ValueError(
+                        f"Receptor '{rec_name}' has no sigma_R set. "
+                        "Set it in the receptor dict before calling.")
+                NR_ave = NP_excluded_area * sR
 
                 if not depletion:
                     # Langmuir with Poisson fluctuations
                     assert bound_vs_receptor is not None, \
-                        "bound_vs_receptor required when fluctuations=True, depletion=False"
+                        "bound_vs_receptor required when fluctuations=True, depletion=False (single receptor type)"
                     if verbose:
-                        print(f"NR_ave: {NR_ave}, sigma_R: {sigma_R}")
+                        print(f"NR_ave: {NR_ave}, sigma_R: {sR}")
 
                     int_NR_ave = int(NR_ave)
                     max_NR = int_NR_ave + max_factor * (int_NR_ave + 1) if int_NR_ave > 1 else 20
@@ -609,19 +662,16 @@ class MultivalentBinding:
                     return bound_fraction
 
             else:
-                # Multi-receptor: independent Poisson for each receptor type
-                import itertools
-
+                # Multiple receptor types: multi-dimensional Poisson average
                 if K_bind_vs_receptors is None:
                     K_bind_vs_receptors = self.calculate_K_bind_vs_receptors(
                         max_n_receptor)
 
-                K_bind_flat, grid_shape, NR_aves = K_bind_vs_receptors
+                K_bind_flat, grid_shape, NR_aves, rec_names = K_bind_vs_receptors
 
                 # Build flattened Poisson weight array (product of independent Poissons)
-                n_lig = len(self._ligand_keys)
                 axes_poisson = []
-                for i in range(n_lig):
+                for i in range(n_rec):
                     NR_ave_i = NR_aves[i]
                     n_i = grid_shape[i]
                     exp_neg = mp.exp(-NR_ave_i)

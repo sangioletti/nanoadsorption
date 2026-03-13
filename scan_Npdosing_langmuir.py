@@ -52,8 +52,8 @@ for factor in factors:
     nads_lennart_fraction = np.zeros(n_sampling_points)
 
     for i, sigma_R in enumerate(sigma_R_values):
+        receptor["sigma_R"] = sigma_R
         bound_fraction = system_ref.calculate_bound_fraction(
-            sigma_R,
             fluctuations=True, depletion=False,
             bound_vs_receptor=bound_vs_receptor,
             max_factor=4

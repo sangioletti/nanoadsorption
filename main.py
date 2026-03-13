@@ -44,8 +44,8 @@ with open( 'adsorption.dat', 'w+' ) as f:
     cached_K_bind = np.zeros(n_sampling_points)
 
     for i, sigma_R in enumerate(sigma_R_values):
+        receptor["sigma_R"] = sigma_R
         cached_K_bind[i] = system.calculate_binding_constant(
-                                                          sigma_R = sigma_R,
                                                           verbose = verbose)
     print( f"K_bind calculated")
     
@@ -58,8 +58,8 @@ with open( 'adsorption.dat', 'w+' ) as f:
     M_conc_depletion = (A_cell / system.NP_excluded_area) * cell_conc
 
     for i, sigma_R in enumerate(sigma_R_values):
+        receptor["sigma_R"] = sigma_R
         bound_fraction = system.calculate_bound_fraction(
-                                sigma_R,
                                 fluctuations=True, depletion=True,
                                 K_bind_vs_receptors=K_bind_vs_NR,
                                 NP_conc=NP_conc,

@@ -31,8 +31,12 @@ KD = 150 * nM # Dissociation constant in solution between ligand-receptor
 K_bind_0 = KD**(-1) # Binding constant in solution between ligand-receptor
 
 nonspec_interaction = 0.0 # Strength of nonspecific interaction between whole nanoparticle and surface, in units of kT
+
+# Receptor dict — sigma_R is set by the driver script during sweeps
+receptor = {"name": "default"}
+
 data_polymers = {}
 sigma_L = N_ligands / ( 4.0 * np.pi * R_NP**2 ) # surface density of ligands
-sigma_P2K = sigma_L * 11.4 
+sigma_P2K = sigma_L * 11.4
 data_polymers['short'] = {"N": NmonoShort, "a": amono, "sigma": sigma_P2K, "name" : "PEG2K", 'akuhn' : akuhn }
-data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn, "K_bind_0": K_bind_0 }
+data_polymers['ligands'] = {"N": NmonoLigands, "a": amono, "sigma": sigma_L, "name":"ligands", 'akuhn' : akuhn, "K_bind_0": K_bind_0, "receptor": receptor }
