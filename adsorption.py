@@ -20,7 +20,7 @@ class MultivalentBinding:
         self.nm3 = ( self.nm )**3 # Sets the units of volume
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
         self.R_NP = R_NP
-        self.nonspec_K = np.exp( self.kT * nonspec_interaction ) # 0.0
+        self.nonspec_K = np.exp( -nonspec_interaction ) # 0.0
         self.polymer_model = polymer_model
         self.binding_model = binding_model
         self.A_cell = A_cell
