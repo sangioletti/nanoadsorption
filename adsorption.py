@@ -69,16 +69,17 @@ class MultivalentBinding:
         # Precompute K_LR parameters for each ligand type
         self._ligand_klr_params = {}
         self._saw_g_interp = {}
-        max_ligand_length = 0.0
+        z_max = 0.0
         max_Ree = 0.0
 
         for key in self._ligand_keys:
             poly = data_polymers[key]
             N_lig = poly["N"]
             a_lig = poly["a"]
+            binder_linear_size = poly.get("binder_linear_size", 0.0)
             a_kuhn = poly.get("akuhn", a_lig)
             R_ee = self.r_ee(N_lig, a_lig, a_kuhn)
-            max_ligand_length = max(max_ligand_length, N_lig * a_lig)
+            z_max = max(z_max, N_lig * a_lig + binder_linear_size)
             if R_ee > max_Ree:
                 max_Ree = R_ee
 
@@ -102,8 +103,13 @@ class MultivalentBinding:
                     bounds_error=False, fill_value=(0.0, 1.0),
                 )
 
-        self._max_ligand_length = max_ligand_length
+        self._z_max = z_max
         self._Ree_ligands = max_Ree
+
+        # Precompute minimum binder size across all ligands (for integration range)
+        binder_sizes = [data_polymers[k].get("binder_linear_size", 0.0)
+                        for k in self._ligand_keys]
+        self._min_binder_size = min(binder_sizes) if binder_sizes else 0.0
 
         # Precompute steric factors for each polymer type (keyed by "name" field)
         self._polymer_steric_factor = {}
@@ -186,22 +192,36 @@ class MultivalentBinding:
         Uses K_bind_0 from data_polymers[ligand_key]["K_bind_0"] and the
         precomputed K_LR parameters for that ligand.
 
-        Gaussian/Flory: K_bind_0 * P_z(h) / erf(h*sqrt(3/(2Na^2))).
-        Flory-exact: K_bind_0 * P_z(h) / g(h)  from des Cloizeaux SAW."""
+        If the ligand has a binder_linear_size b (e.g., antibody), the polymer
+        end must reach h_eff = h - b for the binder to bridge the remaining
+        gap. The confinement factor g is evaluated at h (the polymer is
+        confined by the opposing surface, not the binder).
+
+        When h_eff < 0 the surfaces are too close for the binder to fit,
+        so K_LR = 0 (no binding).
+
+        K_LR = K_bind_0 * P_z(h_eff) / g(h)."""
         K_bind_0 = self.data_polymers[ligand_key]["K_bind_0"]
+        binder_size = self.data_polymers[ligand_key].get("binder_linear_size", 0.0)
+        h_eff = h - binder_size
         params = self._ligand_klr_params[ligand_key]
 
+        # Surfaces too close for the binder to fit
+        if h_eff < 0:
+            return 0.0
+
         if self.polymer_model in [ "gaussian", "Flory-approx" ]:
+            # g(h): confinement by the opposing surface
             g_lig = math.erf(h * math.sqrt(params["steric_factor"]))
             if g_lig < 1e-15:
                 g_lig = 1e-15
-            return K_bind_0 * params["prefactor_factor"] * np.exp(-h**2 * params["exp_factor"]) / g_lig
+            return K_bind_0 * params["prefactor_factor"] * np.exp(-h_eff**2 * params["exp_factor"]) / g_lig
         elif self.polymer_model == "Flory-exact":
-            pz = float(params["pz_interp"](h))
             lig_name = self.data_polymers[ligand_key]["name"]
             g_lig = float(self._saw_g_interp[lig_name](h))
             if g_lig < 1e-15:
                 g_lig = 1e-15
+            pz = float(params["pz_interp"](h_eff))
             return K_bind_0 * pz / g_lig
         else:
             raise NotImplementedError( f'Area-weighted bond cost for polymer model {self.polymer_model} not implemented' )    
@@ -287,9 +307,18 @@ class MultivalentBinding:
         return res
     
     def W_steric(self, h, verbose = False):
-        """Calculate steric repulsion free energy per unit area"""
+        """Calculate steric repulsion free energy per unit area.
+
+        Returns infinite repulsion when h < binder_linear_size for any
+        ligand, since the binder cannot physically fit in the gap."""
         assert self.polymer_model in [ "gaussian", "Flory-approx", "Flory-exact" ], \
             AssertionError( f"Repulsion not implemented for polymer model {self.polymer_model}")
+
+        # Check if any ligand's binder doesn't fit
+        for key in self._ligand_keys:
+            binder_size = self.data_polymers[key].get("binder_linear_size", 0.0)
+            if binder_size > 0 and h < binder_size:
+                return np.inf
 
         res = 0.0
         for polymer in self.data_polymers.values():
@@ -348,7 +377,8 @@ class MultivalentBinding:
 
             R_NP = self.R_NP
             Area = self.NP_excluded_area  # Approximate adsorption area of the nanoparticle
-            z_max = self._max_ligand_length
+            z_max = self._z_max
+            z_min = self._min_binder_size
 
             if self.binding_model == "saddle":
                 def force(h):
@@ -365,7 +395,7 @@ class MultivalentBinding:
                 R_ee = self._Ree_ligands
 
                 initial_guess = R_ee
-                bounds = [(0.0, z_max)]
+                bounds = [(z_min, z_max)]
                 result = minimize(find_z_bind, initial_guess, bounds=bounds)
                 z_bind = result.x[ 0 ]
 
@@ -387,7 +417,7 @@ class MultivalentBinding:
 
                 # Binding constant using saddle point approximation
                 h_grid_saddle = np.linspace(z_bind, z_max, 100)
-                energy_min = np.trapz([force(h) for h in h_grid_saddle], h_grid_saddle)
+                energy_min = np.trapezoid([force(h) for h in h_grid_saddle], h_grid_saddle)
 
                 if verbose:
                     print( f'Energy minimum: {energy_min}' )
@@ -399,7 +429,7 @@ class MultivalentBinding:
             elif self.binding_model == "exact":
                 # Precompute force on a single grid (instead of 100x100 redundant evaluations)
                 n_grid = 200
-                h_grid = np.linspace(0, z_max, n_grid)
+                h_grid = np.linspace(z_min, z_max, n_grid)
                 force_grid = np.array([
                     float(2 * mp.pi * R_NP * self.W_total(h, verbose=verbose))
                     for h in h_grid
