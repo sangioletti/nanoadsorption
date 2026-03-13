@@ -69,6 +69,10 @@ V_SPR = float(row[10])
 A_SPR = float(row[11])
 npoints = int(row[12])
 int_points = int(row[13])
+# Optional 15th field: nonspec_interaction [kT] (default 0)
+nonspec_interaction = float(row[14]) if len(row) > 14 else 0.0
+# Optional 16th field: binder_linear_size [nm] (default 0)
+binder_linear_size = float(row[15]) * nm if len(row) > 15 else 0.0
 
 
 
@@ -99,7 +103,7 @@ data_polymers = { "ligands": {"N": NmonoLong, "a": amono, "name": "ligands", "si
 # For the invitro (SPR) case, map to the generic constructor:
 #   A_cell    = A_SPR  (the adsorbing surface area)
 #   cell_conc = 1/V_SPR  (one surface per SPR volume)
-system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_SPR, NP_conc=NP_conc, cell_conc=1.0/V_SPR)
+system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_SPR, NP_conc=NP_conc, cell_conc=1.0/V_SPR, nonspec_interaction=nonspec_interaction, binder_linear_size=binder_linear_size)
 
 def process_sigma_R(sigma_R, system, K_bind_0, verbose):
     adsorbed_fraction = system.calculate_bound_fraction(

@@ -72,6 +72,10 @@ N_cells = float(row[13])
 d_cell = float(row[14])
 npoints = int(row[15])
 int_points = int(row[16])
+# Optional 18th field: nonspec_interaction [kT] (default 0)
+nonspec_interaction = float(row[17]) if len(row) > 17 else 0.0
+# Optional 19th field: binder_linear_size [nm] (default 0)
+binder_linear_size = float(row[18]) * nm if len(row) > 18 else 0.0
 
 
 
@@ -100,7 +104,7 @@ n_sampling_points = npoints
 
 data_polymers = { "ligands": {"N": NmonoLong, "a": amono, "name": "ligands", "sigma": sigma_L}, "short": {"N": NmonoPEG2k, "a": amono, "name": "PEG2k", "sigma": sigma_P2K}, }
 
-system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_cell, NP_conc=NP_conc, cell_conc=cell_conc)
+system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_cell, NP_conc=NP_conc, cell_conc=cell_conc, nonspec_interaction=nonspec_interaction, binder_linear_size=binder_linear_size)
 
 def process_sigma_R(sigma_R, system, K_bind_0, verbose):
     adsorbed_fraction = system.calculate_bound_fraction(

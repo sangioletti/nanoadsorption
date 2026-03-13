@@ -66,6 +66,10 @@ with open(filename, 'r') as file:
     reader = csv.reader(file)
     row = next(reader)
     NmonoLong,NmonoPEG2k,amono,PEG2k,APEG2k,PEG_max_extension,d_NP,KD,sigma_R,Npdosing,Vdosing,fROI,VROI,N_cells,d_cell,npoints, int_points = int(row[0]),int(row[1]),float(row[2]),float(row[3]),float(row[4]),float(row[5]),float(row[6]),float(row[7]),float(row[8]),float(row[9]),float(row[10]),float(row[11]),float(row[12]),float(row[13]),float(row[14]),int(row[15]),int(row[16])
+    # Optional 18th field: nonspec_interaction [kT] (default 0)
+    nonspec_interaction = float(row[17]) if len(row) > 17 else 0.0
+    # Optional 19th field: binder_linear_size [nm] (default 0)
+    binder_linear_size = float(row[18]) * nm if len(row) > 18 else 0.0
 
 # Define the design of the multivalent nanoparticle
 #NmonoLong = Number of monomers in ligand conjugated PEG chain
@@ -111,7 +115,7 @@ def sigma_L_to_N_ligands(sigma_L):
 verbose = False
 n_sampling_points = npoints #Number of sampling points for the receptor surface density
 
-def process_sigma_L(sigma_L, K_bind_0, verbose):
+def process_sigma_L(sigma_L, K_bind_0, nonspec_interaction, binder_linear_size, verbose):
     start_time = time.time()
 
     data_polymers = {
@@ -139,6 +143,8 @@ def process_sigma_L(sigma_L, K_bind_0, verbose):
         A_cell = A_cell,
         NP_conc = NP_conc,
         cell_conc = cell_conc,
+        nonspec_interaction = nonspec_interaction,
+        binder_linear_size = binder_linear_size,
     )
 
     # Now we can calculate the adsorbed fraction
@@ -176,7 +182,7 @@ if __name__ == '__main__':
             sigma_L_values = np.logspace(np.log10(sigma_L_min), np.log10(sigma_L_max), n_sampling_points )
             total_time = 0
             with get_context(CONTEXT).Pool(MAX_WORKERS) as pool:
-                process_func = partial(process_sigma_L, K_bind_0=K_bind_0, verbose=verbose)
+                process_func = partial(process_sigma_L, K_bind_0=K_bind_0, nonspec_interaction=nonspec_interaction, binder_linear_size=binder_linear_size, verbose=verbose)
                 results = pool.map(process_func, sigma_L_values)
                 for i, (out1, out2, out3, duration) in enumerate(results):
                     print(f"Running {i+1} of {n_sampling_points} in {duration:.4f} seconds")

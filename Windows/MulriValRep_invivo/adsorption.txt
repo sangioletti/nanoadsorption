@@ -12,7 +12,8 @@ class MultivalentBinding:
                  A_cell, NP_conc, cell_conc, 
                  binding_model = None, 
                  polymer_model = "gaussian",
-                 nonspec_interaction = 0.0):
+                 nonspec_interaction = 0.0,
+                 binder_linear_size = 0.0):
         self.data_polymers = data_polymers
         self.kT = kT # Thermal energy (kB*T)
         self.nm = 1.0 # Sets the units of length
@@ -20,7 +21,8 @@ class MultivalentBinding:
         self.nm3 = ( self.nm )**3 # Sets the units of volume
         self.rhostd = 6.023e23/ ( 1e24 * self.nm3 )
         self.R_NP = R_NP
-        self.nonspec_K = np.exp( self.kT * nonspec_interaction ) # 0.0 
+        self.nonspec_K = np.exp( -nonspec_interaction ) # 0.0
+        self.binder_linear_size = binder_linear_size
         self.polymer_model = polymer_model 
         self.binding_model = binding_model
         self.A_cell = A_cell
@@ -135,19 +137,27 @@ class MultivalentBinding:
         Uses the CONFINED chain-end distribution P_z(h)/g(h) so that K_LR
         is self-consistent with the confinement penalty in W_steric.
 
-        Gaussian/Flory: K_bind_0 * P_z(h) / erf(h*sqrt(3/(2Na^2))).
-        Rod: K_bind_0 / h  for 0 < h <= L.
-        Cone: K_bind_0 / (h - L*cos(theta_max))  for L*cos(th) < h <= L.
-        FJC: K_bind_0 * P_z(h) / g(h)  from numerically tabulated CDF.
-        Brush (MWC parabolic): K_bind_0 * P_end(h) / g(h).
-        Flory-exact: K_bind_0 * P_z(h) / g(h)  from des Cloizeaux SAW."""
+        If binder_linear_size b > 0, the polymer end must reach h_eff = h - b
+        for the binder to bridge the remaining gap. P_z is evaluated at h_eff,
+        g at h (polymer confined by opposing surface, not binder).
+        When h_eff < 0, the binder doesn't fit: K_LR = 0.
+
+        Gaussian/Flory: K_bind_0 * P_z(h_eff) / g(h).
+        Flory-exact: K_bind_0 * P_z(h_eff) / g(h) from des Cloizeaux SAW."""
+        binder_size = self.binder_linear_size
+        h_eff = h - binder_size
+
+        # Surfaces too close for the binder to fit
+        if h_eff < 0:
+            return 0.0
+
         if self.polymer_model in [ "gaussian", "Flory-approx" ]:
             g_lig = math.erf(h * math.sqrt(self._klr_lig_steric_factor))
             if g_lig < 1e-15:
                 g_lig = 1e-15
-            return K_bind_0 * self._klr_prefactor_factor * np.exp(-h**2 * self._klr_exp_factor) / g_lig
+            return K_bind_0 * self._klr_prefactor_factor * np.exp(-h_eff**2 * self._klr_exp_factor) / g_lig
         elif self.polymer_model == "Flory-exact":
-            pz = float(self._klr_pz_interp(h))
+            pz = float(self._klr_pz_interp(h_eff))
             lig_name = self.data_polymers["ligands"]["name"]
             g_lig = float(self._saw_g_interp[lig_name](h))
             if g_lig < 1e-15:
@@ -222,9 +232,15 @@ class MultivalentBinding:
         return res
     
     def W_steric(self, h, verbose = False):
-        """Calculate steric repulsion free energy per unit area"""
+        """Calculate steric repulsion free energy per unit area.
+
+        Returns infinite repulsion when h < binder_linear_size,
+        since the binder cannot physically fit in the gap."""
         assert self.polymer_model in [ "gaussian", "Flory-approx", "Flory-exact" ], \
             AssertionError( f"Repulsion not implemented for polymer model {self.polymer_model}")
+
+        if self.binder_linear_size > 0 and h < self.binder_linear_size:
+            return np.inf
 
         res = 0.0
         for polymer in self.data_polymers.values():
@@ -287,30 +303,32 @@ class MultivalentBinding:
 
             Area = self.NP_excluded_area  # Approximate adsorption area of the nanoparticle
 
+            z_min = self.binder_linear_size
+
             if self.binding_model == "saddle":
                 N_long = self.data_polymers["ligands"]["N"]
                 a = self.data_polymers["ligands"]["a"]
-                z_max = N_long * a
+                z_max = N_long * a + self.binder_linear_size
                 #"""Calculate binding constant using Derjaguin approximation AND saddle point approximation"""
                 def force(h):
-                    return 2 * np.pi * R_NP * self.W_total(h, 
-                                                       sigma_R = sigma_R, 
-                                                       K_bind_0 = K_bind_0, 
-                                                       verbose = verbose 
+                    return 2 * np.pi * R_NP * self.W_total(h,
+                                                       sigma_R = sigma_R,
+                                                       K_bind_0 = K_bind_0,
+                                                       verbose = verbose
                                                        )
-        
+
                 # Find equilibrium binding distance where W_total = 0
                 def find_z_bind(h):
-                    return self.W_total(h, 
-                                    sigma_R = sigma_R, 
-                                    K_bind_0 = K_bind_0, 
-                                    verbose = verbose 
+                    return self.W_total(h,
+                                    sigma_R = sigma_R,
+                                    K_bind_0 = K_bind_0,
+                                    verbose = verbose
                                     )
 
                 R_ee = self._Ree_ligands
 
-                initial_guess = R_ee
-                bounds = [(0.0, z_max)]
+                initial_guess = max(R_ee, z_min)
+                bounds = [(z_min, z_max)]
                 result = minimize(find_z_bind, initial_guess, bounds=bounds)
                 z_bind = result.x[ 0 ]
         
@@ -347,11 +365,11 @@ class MultivalentBinding:
                 #"""Calculate binding constant using Derjaguin approximation"""
                 N_long = self.data_polymers["ligands"]["N"]
                 a = self.data_polymers["ligands"]["a"]
-                z_max = N_long * a
+                z_max = N_long * a + self.binder_linear_size
 
                 # Precompute force on a single grid (instead of 100x100 redundant evaluations)
                 n_grid = 200
-                h_grid = np.linspace(0, z_max, n_grid)
+                h_grid = np.linspace(z_min, z_max, n_grid)
                 force_grid = np.array([
                     float(2 * mp.pi * R_NP * self.W_total(h, sigma_R=sigma_R,
                                                           K_bind_0=K_bind_0, verbose=verbose))

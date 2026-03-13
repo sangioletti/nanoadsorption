@@ -69,9 +69,9 @@ if not Path(filename).exists():
 with open(filename, 'r') as f:
     row = [s.strip() for s in f.read().split(',')]
 
-if len(row) != 15:
+if len(row) < 15 or len(row) > 17:
     raise ValueError(
-        f"MultiValC1.csv must contain exactly 15 values, got {len(row)}."
+        f"MultiValC1.csv must contain 15 to 17 values, got {len(row)}."
     )
 
 NmonoLong         = int(row[0])
@@ -89,6 +89,10 @@ V_SPR             = float(row[11])
 A_SPR             = float(row[12])
 npoints           = int(row[13])
 int_points        = int(row[14])
+# Optional 16th field: nonspec_interaction [kT] (default 0)
+nonspec_interaction = float(row[15]) if len(row) > 15 else 0.0
+# Optional 17th field: binder_linear_size [nm] (default 0)
+binder_linear_size = float(row[16]) * nm if len(row) > 16 else 0.0
 
 
 # Unit conversions
@@ -131,6 +135,8 @@ system = MultivalentBinding(
     A_cell=A_SPR_si,
     NP_conc=NP_concmax_si,   # placeholder; overwritten per worker call
     cell_conc=1.0 / V_SPR_si,
+    nonspec_interaction=nonspec_interaction,
+    binder_linear_size=binder_linear_size,
 )
 
 
