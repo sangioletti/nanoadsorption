@@ -25,7 +25,7 @@ akuhn = 0.76 * nm
 NmonoLigands = Nmonomers(3400 * g)
 NmonoShort = Nmonomers(2000 * g)
 
-N_ligands_A = 100
+N_ligands_A = 50
 N_ligands_B = 50
 sigma_L_A = N_ligands_A / (4.0 * np.pi * R_NP**2)
 sigma_L_B = N_ligands_B / (4.0 * np.pi * R_NP**2)
@@ -36,11 +36,11 @@ KD_B = 50.0 * nM    # ligand B: higher affinity
 
 # ---- Cell / dosing parameters ----
 A_cell = 100 * um2
-NP_conc = 1e10 / mL
+NP_conc = 1e8 / mL
 cell_conc = 1e5 / mL
 
 # ---- Test sigma_R values ----
-sigma_R_test = 200.0 / um2
+sigma_R_test = 700.0 / um2
 
 # ===========================================================
 # System 1: Ligand A only
@@ -55,13 +55,13 @@ dp_A = {
 
 system_A = MultivalentBinding(
     kT=kT, R_NP=R_NP, data_polymers=dp_A,
-    binding_model="exact", polymer_model="gaussian",
+    binding_model="exact", polymer_model="Flory-exact",
     A_cell=A_cell, NP_conc=NP_conc, cell_conc=cell_conc,
     single_receptor=True,
 )
 
 K_bind_A = system_A.calculate_binding_constant(sigma_R=sigma_R_test)
-bf_A = system_A.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=True)
+bf_A = system_A.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=False)
 
 print(f"=== Ligand A only (KD = {KD_A/nM:.0f} nM, N_lig = {N_ligands_A}) ===")
 print(f"  K_bind   = {float(K_bind_A):.4e}")
@@ -80,13 +80,13 @@ dp_B = {
 
 system_B = MultivalentBinding(
     kT=kT, R_NP=R_NP, data_polymers=dp_B,
-    binding_model="exact", polymer_model="gaussian",
+    binding_model="exact", polymer_model="Flory-exact",
     A_cell=A_cell, NP_conc=NP_conc, cell_conc=cell_conc,
     single_receptor=True,
 )
 
 K_bind_B = system_B.calculate_binding_constant(sigma_R=sigma_R_test)
-bf_B = system_B.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=True)
+bf_B = system_B.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=False)
 
 print(f"\n=== Ligand B only (KD = {KD_B/nM:.0f} nM, N_lig = {N_ligands_B}) ===")
 print(f"  K_bind   = {float(K_bind_B):.4e}")
@@ -108,13 +108,13 @@ dp_AB = {
 
 system_AB = MultivalentBinding(
     kT=kT, R_NP=R_NP, data_polymers=dp_AB,
-    binding_model="exact", polymer_model="gaussian",
+    binding_model="exact", polymer_model="Flory-exact",
     A_cell=A_cell, NP_conc=NP_conc, cell_conc=cell_conc,
     single_receptor=True,
 )
 
 K_bind_AB = system_AB.calculate_binding_constant(sigma_R=sigma_R_test)
-bf_AB = system_AB.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=True)
+bf_AB = system_AB.calculate_bound_fraction(sigma_R=sigma_R_test, depletion=False)
 
 print(f"\n=== Both ligands A + B (single_receptor=True) ===")
 print(f"  K_bind   = {float(K_bind_AB):.4e}")
