@@ -178,7 +178,7 @@ if __name__ == '__main__':
     with open( f2_path, 'w' ) as f2:
         with open(f3_path, 'w') as f3:
 
-            M_conc = (A_cell/(np.pi * R_NP**2)) * cell_conc # Concentration of binding sites for NPs
+            M_conc = (A_cell/((2 * R_NP)**2)) * cell_conc # Concentration of binding sites for NPs
             sigma_L_values = np.logspace(np.log10(sigma_L_min), np.log10(sigma_L_max), n_sampling_points )
             total_time = 0
             with get_context(CONTEXT).Pool(MAX_WORKERS) as pool:

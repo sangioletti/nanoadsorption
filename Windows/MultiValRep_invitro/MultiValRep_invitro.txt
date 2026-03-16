@@ -105,17 +105,21 @@ data_polymers = { "ligands": {"N": NmonoLong, "a": amono, "name": "ligands", "si
 #   cell_conc = 1/V_SPR  (one surface per SPR volume)
 system = MultivalentBinding( kT=kT, R_NP=R_NP, data_polymers=data_polymers, polymer_model="Flory-exact", binding_model="exact", A_cell=A_SPR, NP_conc=NP_conc, cell_conc=1.0/V_SPR, nonspec_interaction=nonspec_interaction, binder_linear_size=binder_linear_size)
 
-def process_sigma_R(sigma_R, system, K_bind_0, verbose):
-    adsorbed_fraction = system.calculate_bound_fraction(
+def process_sigma_R(sigma_R, system, K_bind_0, bound_vs_receptor, M_conc, NP_conc, verbose):
+    theta = system.calculate_bound_fraction(
         K_bind_0=K_bind_0,
         sigma_R=sigma_R,
         fluctuations=True,
-        depletion=True,
+        depletion=False,
+        bound_vs_receptor=bound_vs_receptor,
         max_factor=4,
         verbose=verbose
     )
+    # Convert site occupancy (theta) to N_adsorbed / (N_adsorbed + N_bulk)
+    ads_conc = float(theta) * M_conc
+    ratio = ads_conc / (ads_conc + NP_conc) if (ads_conc + NP_conc) > 0 else 0.0
     out1 = float(sigma_R / (1 / um2))  # sigma_R in receptors/um^2
-    out2 = float(adsorbed_fraction)
+    out2 = float(ratio)
     return out1, out2
 
 
@@ -127,6 +131,17 @@ if __name__ == "__main__":
     # Output files in the same folder as the executable/script
     f2_path = WORK_DIR / "MultiValR2.csv"
 
+    # Precompute K_bind and Langmuir site occupancy (independent of sigma_R)
+    NR_ave_max = system.NP_excluded_area * sigma_R_max
+    int_NR_ave_max = int(NR_ave_max)
+    max_NR = int_NR_ave_max + 4 * (int_NR_ave_max + 1) if int_NR_ave_max > 1 else 20
+
+    print(f"Precomputing K_bind for {max_NR} receptor values...")
+    K_bind_vs_NR = system.calculate_K_bind_vs_receptors(K_bind_0, max_NR)
+    bound_vs_receptor = system.calculate_bound_vs_receptors_monodisperse(
+        K_bind_0, max_NR, depletion=False, K_bind_vs_NR=K_bind_vs_NR)
+
+    M_conc = (A_SPR / system.NP_excluded_area) * (1.0 / V_SPR)
 
     # Prepare sigma_R range
     min_exp = np.log10(sigma_R_min)
@@ -136,6 +151,8 @@ if __name__ == "__main__":
     # Run parallel computation and write outputs
     with open(f2_path, "w") as f2:
         with get_context(CONTEXT).Pool(MAX_WORKERS) as pool:
-            process_func = partial(process_sigma_R, system=system, K_bind_0=K_bind_0, verbose=verbose)
+            process_func = partial(process_sigma_R, system=system, K_bind_0=K_bind_0,
+                                   bound_vs_receptor=bound_vs_receptor, M_conc=M_conc,
+                                   NP_conc=NP_conc, verbose=verbose)
             for out1, out2 in pool.imap(process_func, sigma_R_values):
                 f2.write(f"{out1:5.3e} , {out2:5.3e}\n")

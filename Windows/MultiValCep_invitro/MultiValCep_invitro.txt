@@ -140,33 +140,32 @@ system = MultivalentBinding(
 )
 
 
-def process_NP_conc(NP_conc_i, system, K_bind_0, sigma_R, verbose):
-    """Evaluate adsorbed fraction for one NP concentration value.
+def process_NP_conc(NP_conc_i, system, K_bind_0, sigma_R, K_bind_vs_NR, max_NR, M_conc, verbose):
+    """Evaluate adsorbed ratio for one NP concentration value.
 
-    Parameters
-    ----------
-    NP_conc_i : float
-        NP concentration in internal units [nm^-3].
-    system    : MultivalentBinding
-        Lives in a subprocess copy; NP_conc is overwritten safely.
-    K_bind_0  : float
-        Intrinsic (monovalent) binding constant.
-    sigma_R   : float
-        Fixed receptor surface density [nm^-2].
-    verbose   : bool
+    Uses Langmuir (no depletion) with Poisson fluctuations.
+    Returns the ratio N_adsorbed / (N_adsorbed + N_bulk).
     """
-    adsorbed_fraction = system.calculate_bound_fraction(
+    bound_vs_receptor = system.calculate_bound_vs_receptors_monodisperse(
+        K_bind_0, max_NR, depletion=False, K_bind_vs_NR=K_bind_vs_NR, NP_conc=NP_conc_i)
+
+    theta = system.calculate_bound_fraction(
         K_bind_0=K_bind_0,
         sigma_R=sigma_R,
         fluctuations=True,
-        depletion=True,
+        depletion=False,
+        bound_vs_receptor=bound_vs_receptor,
         max_factor=4,
         NP_conc=NP_conc_i,
         verbose=verbose,
     )
 
+    # Convert site occupancy (theta) to N_adsorbed / (N_adsorbed + N_bulk)
+    ads_conc = float(theta) * M_conc
+    ratio = ads_conc / (ads_conc + NP_conc_i) if (ads_conc + NP_conc_i) > 0 else 0.0
+
     out1 = float(NP_conc_i * mL)   # convert back to particles / mL for output
-    out2 = float(adsorbed_fraction)
+    out2 = float(ratio)
     return out1, out2
 
 
@@ -193,6 +192,15 @@ if __name__ == "__main__":
         n_sampling_points,
     )
 
+    # Precompute K_bind values (independent of NP_conc)
+    NR_ave = system.NP_excluded_area * sigma_R_si
+    int_NR_ave = int(NR_ave)
+    max_NR = int_NR_ave + 4 * (int_NR_ave + 1) if int_NR_ave > 1 else 20
+
+    print(f"Precomputing K_bind for {max_NR} receptor values...")
+    K_bind_vs_NR = system.calculate_K_bind_vs_receptors(K_bind_0, max_NR)
+    M_conc = (A_SPR_si / system.NP_excluded_area) * (1.0 / V_SPR_si)
+
     print(
         f"Sweeping NP_conc from 1 to {NP_concmax:.2e} particles/mL "
         f"({n_sampling_points} log-spaced points)\n"
@@ -207,11 +215,14 @@ if __name__ == "__main__":
                 system=system,
                 K_bind_0=K_bind_0,
                 sigma_R=sigma_R_si,
+                K_bind_vs_NR=K_bind_vs_NR,
+                max_NR=max_NR,
+                M_conc=M_conc,
                 verbose=verbose,
             )
             for out1, out2 in pool.imap(process_func, NP_conc_values):
                 # out1 : NP_conc [particles / mL]
-                # out2 : adsorbed fraction [dimensionless, 0-1]
+                # out2 : N_adsorbed / (N_adsorbed + N_bulk) [dimensionless, 0-1]
                 f2.write(f"{out1:5.3e} , {out2:5.3e}\n")
 
     print("Done.")

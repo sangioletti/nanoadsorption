@@ -134,7 +134,7 @@ if __name__ == "__main__":
     min_exp = np.log10(sigma_R_min)
     max_exp = np.log10(sigma_R_max)
     # Retained for completeness; not used further
-    M_conc = (A_cell / (np.pi * R_NP**2)) * cell_conc
+    M_conc = (A_cell / ((2 * R_NP)**2)) * cell_conc
     sigma_R_values = np.logspace(min_exp, max_exp, n_sampling_points)
 
     # Run parallel computation and write outputs
