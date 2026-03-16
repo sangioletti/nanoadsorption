@@ -162,7 +162,7 @@ def process_NP_conc(NP_conc_i, system, K_bind_0, sigma_R, K_bind_vs_NR, max_NR, 
 
     # Convert site occupancy (theta) to N_adsorbed / (N_adsorbed + N_bulk)
     ads_conc = float(theta) * M_conc
-    ratio = ads_conc / (ads_conc + NP_conc_i) if (ads_conc + NP_conc_i) > 0 else 0.0
+    ratio = ads_conc / (ads_conc + NP_conc_i) if (ads_conc + NP_conc_i) >= 0 else raise ValueError 
 
     out1 = float(NP_conc_i * mL)   # convert back to particles / mL for output
     out2 = float(ratio)

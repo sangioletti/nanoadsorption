@@ -117,7 +117,7 @@ def process_sigma_R(sigma_R, system, K_bind_0, bound_vs_receptor, M_conc, NP_con
     )
     # Convert site occupancy (theta) to N_adsorbed / (N_adsorbed + N_bulk)
     ads_conc = float(theta) * M_conc
-    ratio = ads_conc / (ads_conc + NP_conc) if (ads_conc + NP_conc) > 0 else 0.0
+    ratio = ads_conc / (ads_conc + NP_conc) if (ads_conc + NP_conc) >= 0 else raise ValueError 
     out1 = float(sigma_R / (1 / um2))  # sigma_R in receptors/um^2
     out2 = float(ratio)
     return out1, out2
